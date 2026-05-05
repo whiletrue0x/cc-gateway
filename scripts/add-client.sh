@@ -31,7 +31,7 @@ with open('$CONFIG', 'w') as f:
     echo "  - name: ${CLIENT_NAME}"
     echo "    token: ${CLIENT_TOKEN}"
   }
-  echo "✓ Token added to config.yaml (restart gateway to pick up)"
+  echo "✓ Token added to config.yaml (gateway will hot-reload within ~2s)"
 fi
 
 # Generate the launcher script
