@@ -152,9 +152,22 @@ async function handleRequest(
     config,
   )
 
-  // Inject the real OAuth token via x-api-key (Anthropic uses this header for both
-  // API keys and OAuth tokens, distinguished by prefix: sk-ant-api03- vs sk-ant-oat01-)
-  rewrittenHeaders['x-api-key'] = oauthToken
+  // Inject the OAuth access_token. Anthropic OAuth tokens (sk-ant-oat01-) must
+  // be sent via Authorization: Bearer with the anthropic-beta: oauth-2025-04-20
+  // flag — sending them via x-api-key returns 401 "Invalid authentication
+  // credentials". rewriteHeaders() already stripped any inbound auth headers.
+  delete rewrittenHeaders['x-api-key']
+  rewrittenHeaders['authorization'] = `Bearer ${oauthToken}`
+
+  const oauthBetaFlag = 'oauth-2025-04-20'
+  const existingBeta = rewrittenHeaders['anthropic-beta']
+  if (existingBeta) {
+    if (!existingBeta.split(',').map((s) => s.trim()).includes(oauthBetaFlag)) {
+      rewrittenHeaders['anthropic-beta'] = `${existingBeta},${oauthBetaFlag}`
+    }
+  } else {
+    rewrittenHeaders['anthropic-beta'] = oauthBetaFlag
+  }
 
   // Forward to upstream
   const upstreamUrl = new URL(path, upstream)
