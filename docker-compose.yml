@@ -1,10 +1,18 @@
 services:
   gateway:
     build: .
+    # Coolify auto-generates SERVICE_FQDN_GATEWAY from the domain configured
+    # in the service UI. Set the domain there (e.g. ccg.example.com) and
+    # Coolify will substitute it into the labels below at deploy time.
+    environment:
+      - SERVICE_FQDN_GATEWAY=/
     expose:
       - "8443"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      # Mounted read-write so the dashboard can append/remove client tokens.
+      # Hot-reload via watchFile picks up edits within ~2s.
+      - ./config.yaml:/app/config.yaml
+      - ccg_data:/app/data
     restart: unless-stopped
     networks:
       - coolify
@@ -21,12 +29,14 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
-      - "traefik.http.routers.ccg.rule=Host(`ccg.toolvn.io.vn`)"
+      - "traefik.http.services.ccg.loadbalancer.server.port=8443"
+      # HTTPS router — Coolify substitutes SERVICE_FQDN_GATEWAY at deploy time
+      - "traefik.http.routers.ccg.rule=Host(`${SERVICE_FQDN_GATEWAY}`)"
       - "traefik.http.routers.ccg.entrypoints=https"
       - "traefik.http.routers.ccg.tls=true"
       - "traefik.http.routers.ccg.tls.certresolver=letsencrypt"
-      - "traefik.http.services.ccg.loadbalancer.server.port=8443"
-      - "traefik.http.routers.ccg-http.rule=Host(`ccg.toolvn.io.vn`)"
+      # HTTP → HTTPS redirect
+      - "traefik.http.routers.ccg-http.rule=Host(`${SERVICE_FQDN_GATEWAY}`)"
       - "traefik.http.routers.ccg-http.entrypoints=http"
       - "traefik.http.routers.ccg-http.middlewares=ccg-redirect"
       - "traefik.http.middlewares.ccg-redirect.redirectscheme.scheme=https"
@@ -35,3 +45,6 @@ services:
 networks:
   coolify:
     external: true
+
+volumes:
+  ccg_data:

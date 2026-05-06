@@ -76,3 +76,9 @@ process:
 logging:
   level: info  # debug | info | warn | error
   audit: true  # log which client made each request
+
+# SQLite database — stores dashboard users and request metrics.
+# Path is relative to working directory. In Docker, mount /app/data as a volume
+# so the DB survives restarts. Create dashboard users with: npm run add-user <name>
+db:
+  path: ./data/ccg.db

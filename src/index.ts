@@ -5,6 +5,9 @@ import { setLogLevel, log } from './logger.js'
 import { initOAuth } from './oauth.js'
 import { startProxy } from './proxy.js'
 import { initAuth } from './auth.js'
+import { initDb } from './db.js'
+import { initMetrics } from './metrics.js'
+import { countUsers } from './users.js'
 
 const configPath = process.argv[2]
 
@@ -13,6 +16,14 @@ try {
   setLogLevel(config.logging.level)
 
   log('info', 'CC Gateway starting...')
+
+  const dbPath = config.db?.path || './data/ccg.db'
+  initDb(dbPath)
+  initMetrics()
+  log('info', `SQLite database: ${resolve(dbPath)}`)
+  if (countUsers() === 0) {
+    log('warn', 'No dashboard users yet. Create one with: npm run add-user <username>')
+  }
 
   // Initialize OAuth — uses existing access token if valid, only refreshes when expired
   await initOAuth(config.oauth)

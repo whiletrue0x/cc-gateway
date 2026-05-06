@@ -11,13 +11,16 @@
     "dev": "tsx watch src/index.ts",
     "generate-token": "tsx src/scripts/generate-token.ts",
     "generate-identity": "tsx src/scripts/generate-identity.ts",
+    "add-user": "tsx src/scripts/add-user.ts",
     "test": "tsx tests/rewriter.test.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^11.5.0",
     "https-proxy-agent": "^9.0.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

@@ -22,13 +22,15 @@ export function authenticate(req: IncomingMessage): string | null {
     if (entry) return entry.name
   }
 
-  // Fallback: Bearer token in Authorization or Proxy-Authorization
+  // Bearer token in Authorization or Proxy-Authorization
   const authHeader = req.headers['proxy-authorization'] || req.headers['authorization']
-  if (!authHeader || typeof authHeader !== 'string') return null
+  if (authHeader && typeof authHeader === 'string') {
+    const match = authHeader.match(/^Bearer\s+(.+)$/i)
+    if (match) {
+      const entry = tokenMap.get(match[1])
+      if (entry) return entry.name
+    }
+  }
 
-  const match = authHeader.match(/^Bearer\s+(.+)$/i)
-  if (!match) return null
-
-  const entry = tokenMap.get(match[1])
-  return entry?.name ?? null
+  return null
 }

@@ -9,6 +9,16 @@ import { getAccessToken } from './oauth.js'
 import { rewriteBody, rewriteHeaders } from './rewriter.js'
 import { audit, log } from './logger.js'
 import { getProxyAgent } from './proxy-agent.js'
+import { recordRequest, getMetricsSnapshot } from './metrics.js'
+import { renderDashboard, renderLogin } from './dashboard.js'
+import { authenticateUser } from './users.js'
+import {
+  createSessionCookie,
+  setCookieHeader,
+  clearCookieHeader,
+  getSessionFromRequest,
+} from './session.js'
+import { addClient, listClients, removeClient, buildLauncherScript } from './clients.js'
 
 export function startProxy(config: Config) {
   initAuth(config)
@@ -50,12 +60,14 @@ async function handleRequest(
 ) {
   const method = req.method || 'GET'
   const path = req.url || '/'
+  const pathname = path.split('?')[0]
   const clientIp = req.socket.remoteAddress || 'unknown'
+  const startedAt = Date.now()
 
   log('info', `← ${method} ${path} from ${clientIp}`)
 
   // Health check - no auth required
-  if (path === '/_health') {
+  if (pathname === '/_health') {
     const oauthOk = !!getAccessToken()
     const status = oauthOk ? 200 : 503
     res.writeHead(status, { 'Content-Type': 'application/json' })
@@ -70,8 +82,22 @@ async function handleRequest(
     return
   }
 
+  // Login page + session-protected dashboard
+  if (
+    pathname === '/login' ||
+    pathname === '/logout' ||
+    pathname === '/dashboard' ||
+    pathname === '/' ||
+    pathname === '/_metrics' ||
+    pathname === '/api/clients' ||
+    pathname.startsWith('/api/clients/')
+  ) {
+    await handleDashboardArea(req, res, pathname, method)
+    return
+  }
+
   // Dry-run verification - shows what would be rewritten (auth required)
-  if (path === '/_verify') {
+  if (pathname === '/_verify') {
     const clientName = authenticate(req)
     if (!clientName) {
       res.writeHead(401, { 'Content-Type': 'application/json' })
@@ -156,9 +182,24 @@ async function handleRequest(
       // Stream response directly (SSE for Claude responses)
       proxyRes.pipe(res)
 
-      if (config.logging.audit) {
-        audit(clientName, method, path, status)
+      let finalized = false
+      const finalize = () => {
+        if (finalized) return
+        finalized = true
+        recordRequest({
+          ts: startedAt,
+          client: clientName,
+          method,
+          path: pathname,
+          status,
+          durationMs: Date.now() - startedAt,
+        })
+        if (config.logging.audit) {
+          audit(clientName, method, path, status)
+        }
       }
+      proxyRes.on('end', finalize)
+      proxyRes.on('close', finalize)
     },
   )
 
@@ -168,6 +209,14 @@ async function handleRequest(
       res.writeHead(502, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Bad gateway', detail: err.message }))
     }
+    recordRequest({
+      ts: startedAt,
+      client: clientName,
+      method,
+      path: pathname,
+      status: 502,
+      durationMs: Date.now() - startedAt,
+    })
     if (config.logging.audit) {
       audit(clientName, method, path, 502)
     }
@@ -222,5 +271,222 @@ function buildVerificationPayload(config: Config) {
       system_prompt_env: rewritten.system[0]?.text ?? '(empty)',
       system_block_count: rewritten.system.length,
     },
+  }
+}
+
+function isSecureRequest(req: IncomingMessage): boolean {
+  const proto = req.headers['x-forwarded-proto']
+  if (typeof proto === 'string' && proto.split(',')[0].trim() === 'https') return true
+  return (req.socket as { encrypted?: boolean }).encrypted === true
+}
+
+async function readBody(req: IncomingMessage, limit = 64 * 1024): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of req) {
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+    total += buf.length
+    if (total > limit) throw new Error('body too large')
+    chunks.push(buf)
+  }
+  return Buffer.concat(chunks)
+}
+
+async function handleDashboardArea(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+  method: string,
+) {
+  const secure = isSecureRequest(req)
+
+  // Root → redirect to dashboard or login
+  if (pathname === '/') {
+    const session = getSessionFromRequest(req)
+    res.writeHead(302, { Location: session ? '/dashboard' : '/login' })
+    res.end()
+    return
+  }
+
+  // Login: GET shows form, POST authenticates
+  if (pathname === '/login') {
+    if (method === 'GET') {
+      // If already logged in, send to dashboard
+      if (getSessionFromRequest(req)) {
+        res.writeHead(302, { Location: '/dashboard' })
+        res.end()
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(renderLogin())
+      return
+    }
+    if (method === 'POST') {
+      let body: Buffer
+      try {
+        body = await readBody(req)
+      } catch {
+        res.writeHead(413, { 'Content-Type': 'text/plain' })
+        res.end('Payload too large')
+        return
+      }
+      const params = new URLSearchParams(body.toString('utf-8'))
+      const username = (params.get('username') || '').trim()
+      const password = params.get('password') || ''
+      if (!username || !password) {
+        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderLogin('Username and password required'))
+        return
+      }
+      const user = authenticateUser(username, password)
+      if (!user) {
+        log('warn', `Failed login for "${username}" from ${req.socket.remoteAddress}`)
+        res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderLogin('Invalid username or password'))
+        return
+      }
+      const cookie = createSessionCookie(user.username)
+      log('info', `User "${user.username}" logged in`)
+      res.writeHead(302, {
+        Location: '/dashboard',
+        'Set-Cookie': setCookieHeader(cookie, secure),
+      })
+      res.end()
+      return
+    }
+    res.writeHead(405, { Allow: 'GET, POST' })
+    res.end()
+    return
+  }
+
+  // Logout: clear cookie, redirect to login
+  if (pathname === '/logout') {
+    res.writeHead(302, {
+      Location: '/login',
+      'Set-Cookie': clearCookieHeader(),
+    })
+    res.end()
+    return
+  }
+
+  // Session-protected: dashboard + metrics
+  const session = getSessionFromRequest(req)
+  if (!session) {
+    if (pathname === '/_metrics') {
+      res.writeHead(401, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Unauthorized' }))
+    } else {
+      res.writeHead(302, { Location: '/login' })
+      res.end()
+    }
+    return
+  }
+
+  if (pathname === '/dashboard') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(renderDashboard())
+    return
+  }
+
+  if (pathname === '/_metrics') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify(getMetricsSnapshot()))
+    return
+  }
+
+  if (pathname === '/api/clients') {
+    if (method === 'GET') {
+      const clients = listClients().map((c) => ({
+        name: c.name,
+        token_preview: c.token.slice(0, 8) + '…' + c.token.slice(-4),
+      }))
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ clients }))
+      return
+    }
+    if (method === 'POST') {
+      let body: Buffer
+      try {
+        body = await readBody(req)
+      } catch {
+        res.writeHead(413, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Payload too large' }))
+        return
+      }
+      let payload: { name?: string; gateway_addr?: string; scheme?: string; format?: string }
+      try {
+        payload = JSON.parse(body.toString('utf-8'))
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Invalid JSON' }))
+        return
+      }
+      const name = (payload.name || '').trim()
+      const scheme = payload.scheme === 'http' ? 'http' : 'https'
+      const gatewayAddr =
+        (payload.gateway_addr || '').trim() ||
+        (typeof req.headers.host === 'string' ? req.headers.host : 'localhost:8443')
+      if (!name) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'name required' }))
+        return
+      }
+      let entry
+      try {
+        entry = addClient(name)
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'failed' }))
+        return
+      }
+      log('info', `User "${session.u}" added client "${entry.name}"`)
+      const script = buildLauncherScript({
+        name: entry.name,
+        token: entry.token,
+        gatewayAddr,
+        scheme,
+      })
+      if (payload.format === 'json') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ name: entry.name, token: entry.token, script }))
+        return
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/x-shellscript; charset=utf-8',
+        'Content-Disposition': `attachment; filename="cc-${entry.name}"`,
+        'X-Client-Token': entry.token,
+      })
+      res.end(script)
+      return
+    }
+    res.writeHead(405, { Allow: 'GET, POST' })
+    res.end()
+    return
+  }
+
+  if (pathname.startsWith('/api/clients/')) {
+    const name = decodeURIComponent(pathname.slice('/api/clients/'.length))
+    if (method === 'DELETE') {
+      let removed = false
+      try {
+        removed = removeClient(name)
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'failed' }))
+        return
+      }
+      if (!removed) {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'not found' }))
+        return
+      }
+      log('info', `User "${session.u}" removed client "${name}"`)
+      res.writeHead(204)
+      res.end()
+      return
+    }
+    res.writeHead(405, { Allow: 'DELETE' })
+    res.end()
+    return
   }
 }
