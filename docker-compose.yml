@@ -12,10 +12,9 @@ services:
       # ccg_data persists both the SQLite DB and the auto-generated config.yaml
       # (so device_id + tokens survive restarts/redeploys).
       - ccg_data:/app/data
-      # Optional: mount your existing claude credentials so the gateway can
-      # bootstrap config.yaml on first start without setting CCG_REFRESH_TOKEN.
-      # Uncomment + adjust the host path:
-      # - /root/.claude/.credentials.json:/app/data/claude-credentials.json:ro
+      # Host's claude login credentials — read on first start to bootstrap
+      # config.yaml automatically. Read-only so the container cannot tamper.
+      - /root/.claude/.credentials.json:/app/data/claude-credentials.json:ro
     restart: unless-stopped
     networks:
       - coolify
