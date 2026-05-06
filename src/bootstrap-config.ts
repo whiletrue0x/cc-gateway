@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { randomBytes } from 'crypto'
+import { parseDocument, YAMLMap } from 'yaml'
 import { log } from './logger.js'
 
 interface ClaudeCredentials {
@@ -160,4 +161,70 @@ export function bootstrapConfigIfMissing(configPath: string): boolean {
   log('info', `Generated ${absPath} (seed client + fresh device_id)`)
   log('info', '  Edit identity/env/prompt_env if you need a specific fingerprint.')
   return true
+}
+
+/**
+ * Persist a refreshed OAuth token bundle into config.yaml's `oauth:` section.
+ * Round-trips through parseDocument so user edits / comments are preserved.
+ */
+export function updateConfigOAuth(
+  configPath: string,
+  next: { accessToken: string; refreshToken: string; expiresAt: number },
+): void {
+  const absPath = resolve(configPath)
+  if (!existsSync(absPath)) {
+    log('warn', `updateConfigOAuth: ${absPath} does not exist, skipping persist`)
+    return
+  }
+  try {
+    const raw = readFileSync(absPath, 'utf-8')
+    const doc = parseDocument(raw)
+    let oauth = doc.getIn(['oauth'], true) as YAMLMap | undefined
+    if (!oauth) {
+      oauth = new YAMLMap()
+      doc.set('oauth', oauth)
+    }
+    oauth.set('access_token', next.accessToken)
+    oauth.set('refresh_token', next.refreshToken)
+    oauth.set('expires_at', next.expiresAt)
+    writeFileSync(absPath, doc.toString(), 'utf-8')
+  } catch (err) {
+    log('error', `updateConfigOAuth failed: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+/**
+ * If a mounted credentials.json has a refresh token that differs from the one
+ * already in config.yaml, copy it across before the gateway boots. This handles
+ * the case where the host re-logged in to Claude and rotated the refresh token.
+ *
+ * Only syncs when the credentials file is plausibly newer (different token).
+ * No-op if no credentials file is mounted, or tokens already match.
+ */
+export function syncOAuthFromCredentialsIfChanged(configPath: string): void {
+  const absPath = resolve(configPath)
+  if (!existsSync(absPath)) return
+
+  const creds = gatherSeedCredentials()
+  if (!creds || !creds.refreshToken) return
+
+  let currentRefresh: string | undefined
+  try {
+    const raw = readFileSync(absPath, 'utf-8')
+    const doc = parseDocument(raw)
+    const oauth = doc.getIn(['oauth'], true) as YAMLMap | undefined
+    const rt = oauth?.get('refresh_token')
+    if (typeof rt === 'string') currentRefresh = rt
+  } catch {
+    return
+  }
+
+  if (currentRefresh && currentRefresh === creds.refreshToken) return
+
+  log('info', 'Mounted credentials have a different refresh_token — syncing into config.yaml')
+  updateConfigOAuth(absPath, {
+    accessToken: creds.accessToken || '',
+    refreshToken: creds.refreshToken,
+    expiresAt: creds.expiresAt || 0,
+  })
 }

@@ -2,13 +2,17 @@ import { watchFile } from 'fs'
 import { resolve } from 'path'
 import { loadConfig } from './config.js'
 import { setLogLevel, log } from './logger.js'
-import { initOAuth } from './oauth.js'
+import { initOAuth, setOnTokensUpdated } from './oauth.js'
 import { startProxy } from './proxy.js'
 import { initAuth } from './auth.js'
 import { initDb } from './db.js'
 import { initMetrics } from './metrics.js'
 import { countUsers } from './users.js'
-import { bootstrapConfigIfMissing } from './bootstrap-config.js'
+import {
+  bootstrapConfigIfMissing,
+  syncOAuthFromCredentialsIfChanged,
+  updateConfigOAuth,
+} from './bootstrap-config.js'
 
 // Resolve the config path: explicit arg > CCG_CONFIG_PATH env > /app/data/config.yaml.
 // /app/data is the persistent volume so the auto-generated config survives restarts.
@@ -22,11 +26,23 @@ try {
     process.exit(1)
   }
 
+  // If a credentials.json is mounted and its refresh_token differs from the
+  // one persisted in config.yaml (e.g. host did `claude` and rotated the
+  // token), refresh the config before we load it.
+  syncOAuthFromCredentialsIfChanged(configPath)
+
   const config = loadConfig(configPath)
   setLogLevel(config.logging.level)
 
   log('info', 'CC Gateway starting...')
   log('info', `Config: ${resolve(configPath)}`)
+
+  // Whenever OAuth refreshes (immediately or on the schedule), persist the
+  // rotated refresh_token back to config.yaml so container restarts pick up
+  // the latest valid token instead of replaying a consumed one.
+  setOnTokensUpdated((tokens) => {
+    updateConfigOAuth(configPath, tokens)
+  })
 
   const dbPath = config.db?.path || './data/ccg.db'
   initDb(dbPath)
