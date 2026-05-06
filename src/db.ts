@@ -49,6 +49,19 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_rm_ts ON request_metrics(ts);
     CREATE INDEX IF NOT EXISTS idx_rm_client_ts ON request_metrics(client, ts);
   `)
+
+  // ── 2026-05 schema bump: per-request token usage + cost ──
+  const cols = db.prepare('PRAGMA table_info(request_metrics)').all() as Array<{ name: string }>
+  const has = (n: string) => cols.some((c) => c.name === n)
+  const addCol = (sql: string) => db.exec(`ALTER TABLE request_metrics ADD COLUMN ${sql}`)
+  if (!has('model')) addCol("model TEXT NOT NULL DEFAULT ''")
+  if (!has('input_tokens')) addCol('input_tokens INTEGER NOT NULL DEFAULT 0')
+  if (!has('output_tokens')) addCol('output_tokens INTEGER NOT NULL DEFAULT 0')
+  if (!has('cache_read_tokens')) addCol('cache_read_tokens INTEGER NOT NULL DEFAULT 0')
+  if (!has('cache_creation_tokens')) addCol('cache_creation_tokens INTEGER NOT NULL DEFAULT 0')
+  if (!has('cost_usd')) addCol('cost_usd REAL NOT NULL DEFAULT 0')
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_rm_model_ts ON request_metrics(model, ts)')
 }
 
 export function getOrCreateMeta(key: string, factory: () => string): string {

@@ -14,6 +14,12 @@ export interface RequestRecord {
   path: string
   status: number
   durationMs: number
+  model?: string
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+  costUsd?: number
 }
 
 let startedAt = Date.now()
@@ -39,9 +45,21 @@ export function recordRequest(rec: RequestRecord) {
   try {
     getDb()
       .prepare(
-        'INSERT INTO request_metrics (ts, client, method, path, status, duration_ms) VALUES (?, ?, ?, ?, ?, ?)',
+        `INSERT INTO request_metrics (
+          ts, client, method, path, status, duration_ms,
+          model, input_tokens, output_tokens,
+          cache_read_tokens, cache_creation_tokens, cost_usd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(rec.ts, rec.client, rec.method, rec.path, rec.status, rec.durationMs)
+      .run(
+        rec.ts, rec.client, rec.method, rec.path, rec.status, rec.durationMs,
+        rec.model || '',
+        rec.inputTokens || 0,
+        rec.outputTokens || 0,
+        rec.cacheReadTokens || 0,
+        rec.cacheCreationTokens || 0,
+        rec.costUsd || 0,
+      )
   } catch (err) {
     // Don't break proxying on metrics failures
   }
@@ -63,6 +81,11 @@ interface ClientRow {
   m_put: number
   m_delete: number
   m_other: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
+  cost_usd: number
 }
 
 export function getMetricsSnapshot() {
@@ -75,14 +98,32 @@ export function getMetricsSnapshot() {
     .prepare(
       `SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) as errors
+        SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) as errors,
+        SUM(input_tokens) as input_tokens,
+        SUM(output_tokens) as output_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_creation_tokens) as cache_creation_tokens,
+        SUM(cost_usd) as cost_usd
       FROM request_metrics`,
     )
-    .get() as { total: number; errors: number | null }
+    .get() as {
+      total: number
+      errors: number | null
+      input_tokens: number | null
+      output_tokens: number | null
+      cache_read_tokens: number | null
+      cache_creation_tokens: number | null
+      cost_usd: number | null
+    }
 
   const totals = {
     total: totalsRow.total || 0,
     errors: totalsRow.errors || 0,
+    inputTokens: totalsRow.input_tokens || 0,
+    outputTokens: totalsRow.output_tokens || 0,
+    cacheReadTokens: totalsRow.cache_read_tokens || 0,
+    cacheCreationTokens: totalsRow.cache_creation_tokens || 0,
+    costUsd: totalsRow.cost_usd || 0,
     startedAt,
   }
 
@@ -103,12 +144,42 @@ export function getMetricsSnapshot() {
         SUM(CASE WHEN method = 'POST' THEN 1 ELSE 0 END) as m_post,
         SUM(CASE WHEN method = 'PUT' THEN 1 ELSE 0 END) as m_put,
         SUM(CASE WHEN method = 'DELETE' THEN 1 ELSE 0 END) as m_delete,
-        SUM(CASE WHEN method NOT IN ('GET','POST','PUT','DELETE') THEN 1 ELSE 0 END) as m_other
+        SUM(CASE WHEN method NOT IN ('GET','POST','PUT','DELETE') THEN 1 ELSE 0 END) as m_other,
+        SUM(input_tokens) as input_tokens,
+        SUM(output_tokens) as output_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_creation_tokens) as cache_creation_tokens,
+        SUM(cost_usd) as cost_usd
       FROM request_metrics
       GROUP BY client
       ORDER BY total DESC`,
     )
     .all() as ClientRow[]
+
+  const modelRows = db
+    .prepare(
+      `SELECT
+        model,
+        COUNT(*) as total,
+        SUM(input_tokens) as input_tokens,
+        SUM(output_tokens) as output_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_creation_tokens) as cache_creation_tokens,
+        SUM(cost_usd) as cost_usd
+      FROM request_metrics
+      WHERE model != ''
+      GROUP BY model
+      ORDER BY cost_usd DESC`,
+    )
+    .all() as Array<{
+      model: string
+      total: number
+      input_tokens: number
+      output_tokens: number
+      cache_read_tokens: number
+      cache_creation_tokens: number
+      cost_usd: number
+    }>
 
   const clients = clientRows.map((r) => {
     const byStatus: Record<string, number> = {}
@@ -132,8 +203,23 @@ export function getMetricsSnapshot() {
       lastSeen: r.last_seen,
       byStatus,
       byMethod,
+      inputTokens: r.input_tokens || 0,
+      outputTokens: r.output_tokens || 0,
+      cacheReadTokens: r.cache_read_tokens || 0,
+      cacheCreationTokens: r.cache_creation_tokens || 0,
+      costUsd: r.cost_usd || 0,
     }
   })
+
+  const models = modelRows.map((r) => ({
+    model: r.model,
+    total: r.total,
+    inputTokens: r.input_tokens || 0,
+    outputTokens: r.output_tokens || 0,
+    cacheReadTokens: r.cache_read_tokens || 0,
+    cacheCreationTokens: r.cache_creation_tokens || 0,
+    costUsd: r.cost_usd || 0,
+  }))
 
   const minuteStart = currentMinute - (MINUTES_KEPT - 1) * MINUTE_MS
   const hourStart = currentHour - (HOURS_KEPT - 1) * HOUR_MS
@@ -184,7 +270,15 @@ export function getMetricsSnapshot() {
 
   const recent = db
     .prepare(
-      `SELECT ts, client, method, path, status, duration_ms as durationMs
+      `SELECT
+        ts, client, method, path, status,
+        duration_ms as durationMs,
+        model,
+        input_tokens as inputTokens,
+        output_tokens as outputTokens,
+        cache_read_tokens as cacheReadTokens,
+        cache_creation_tokens as cacheCreationTokens,
+        cost_usd as costUsd
        FROM request_metrics
        ORDER BY ts DESC
        LIMIT ?`,
@@ -196,6 +290,7 @@ export function getMetricsSnapshot() {
     uptimeMs: now - startedAt,
     totals,
     clients,
+    models,
     minuteSeries,
     hourSeries,
     recent,

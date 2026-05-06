@@ -10,6 +10,8 @@ import { rewriteBody, rewriteHeaders } from './rewriter.js'
 import { audit, log } from './logger.js'
 import { getProxyAgent } from './proxy-agent.js'
 import { recordRequest, getMetricsSnapshot } from './metrics.js'
+import { SSEUsageParser } from './usage-parser.js'
+import { computeCost } from './pricing.js'
 import { renderDashboard, renderLogin } from './dashboard.js'
 import { authenticateUser } from './users.js'
 import {
@@ -152,22 +154,9 @@ async function handleRequest(
     config,
   )
 
-  // Inject the OAuth access_token. Anthropic OAuth tokens (sk-ant-oat01-) must
-  // be sent via Authorization: Bearer with the anthropic-beta: oauth-2025-04-20
-  // flag — sending them via x-api-key returns 401 "Invalid authentication
-  // credentials". rewriteHeaders() already stripped any inbound auth headers.
-  delete rewrittenHeaders['x-api-key']
-  rewrittenHeaders['authorization'] = `Bearer ${oauthToken}`
-
-  const oauthBetaFlag = 'oauth-2025-04-20'
-  const existingBeta = rewrittenHeaders['anthropic-beta']
-  if (existingBeta) {
-    if (!existingBeta.split(',').map((s) => s.trim()).includes(oauthBetaFlag)) {
-      rewrittenHeaders['anthropic-beta'] = `${existingBeta},${oauthBetaFlag}`
-    }
-  } else {
-    rewrittenHeaders['anthropic-beta'] = oauthBetaFlag
-  }
+  // Inject the real OAuth token via x-api-key (Anthropic uses this header for both
+  // API keys and OAuth tokens, distinguished by prefix: sk-ant-api03- vs sk-ant-oat01-)
+  rewrittenHeaders['x-api-key'] = oauthToken
 
   // Forward to upstream
   const upstreamUrl = new URL(path, upstream)
@@ -192,13 +181,21 @@ async function handleRequest(
 
       res.writeHead(status, responseHeaders)
 
-      // Stream response directly (SSE for Claude responses)
-      proxyRes.pipe(res)
+      // Tee the response: write to client (live streaming preserved) AND feed
+      // a parser that pulls token usage out of the SSE / JSON body. Only do
+      // this for /v1/messages where Anthropic emits usage; everything else
+      // just passes through directly to keep the hot path cheap.
+      const isMessages = pathname.startsWith('/v1/messages')
+      const parser = isMessages && status >= 200 && status < 300 ? new SSEUsageParser() : null
 
       let finalized = false
       const finalize = () => {
         if (finalized) return
         finalized = true
+        const usage = parser?.result()
+        const cost = usage && usage.model
+          ? computeCost(usage.model, usage)
+          : 0
         recordRequest({
           ts: startedAt,
           client: clientName,
@@ -206,13 +203,38 @@ async function handleRequest(
           path: pathname,
           status,
           durationMs: Date.now() - startedAt,
+          model: usage?.model,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          cacheReadTokens: usage?.cacheReadTokens,
+          cacheCreationTokens: usage?.cacheCreationTokens,
+          costUsd: cost,
         })
         if (config.logging.audit) {
           audit(clientName, method, path, status)
         }
       }
-      proxyRes.on('end', finalize)
-      proxyRes.on('close', finalize)
+
+      if (parser) {
+        proxyRes.on('data', (chunk: Buffer) => {
+          res.write(chunk)
+          parser.feed(chunk)
+        })
+        proxyRes.on('end', () => {
+          parser.end()
+          res.end()
+          finalize()
+        })
+        proxyRes.on('error', (err) => {
+          log('error', `Upstream stream error: ${err.message}`)
+          res.end()
+          finalize()
+        })
+      } else {
+        proxyRes.pipe(res)
+        proxyRes.on('end', finalize)
+        proxyRes.on('close', finalize)
+      }
     },
   )
 

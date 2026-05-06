@@ -195,10 +195,11 @@ export function renderDashboard(): string {
         How to use this dashboard
       </summary>
       <div style="margin-top:12px;font-size:13px;line-height:1.6;color:var(--fg)">
-        <p style="margin:0 0 10px"><strong>Stats row</strong> — totals across the lifetime of this gateway: total requests, active clients (with traffic), errors, and process uptime.</p>
-        <p style="margin:0 0 10px"><strong>Requests over time</strong> — per-client traffic. Toggle <em>Last 60 min</em> / <em>Last 24 h</em> in the top-right.</p>
-        <p style="margin:0 0 10px"><strong>Clients</strong> — every entry under <code>auth.tokens</code>. Click <strong>+ Add client</strong> to generate a token, append it to <code>config.yaml</code>, and download a launcher script.</p>
-        <p style="margin:0 0 10px"><strong>Recent requests</strong> — last 50 requests with status code and duration. Updates every 5 seconds.</p>
+        <p style="margin:0 0 10px"><strong>Stats row</strong> — totals across the gateway's full history (persisted in SQLite): requests, accumulated cost (USD list price), tokens, active clients, errors, uptime.</p>
+        <p style="margin:0 0 10px"><strong>Requests over time</strong> — per-client traffic. Toggle <em>Last 60 min</em> / <em>Last 24 h</em>.</p>
+        <p style="margin:0 0 10px"><strong>By model</strong> — per-model totals: calls, input/output/cache tokens, and cost. Cost uses Anthropic public list prices.</p>
+        <p style="margin:0 0 10px"><strong>Clients</strong> — every entry under <code>auth.tokens</code>, with their lifetime calls / tokens / cost. Click <strong>+ Add client</strong> to generate a token, append it to <code>config.yaml</code>, and download a launcher script.</p>
+        <p style="margin:0 0 10px"><strong>Recent requests</strong> — last 50 requests with model, tokens, cost, and duration. Updates every 5 seconds.</p>
         <p style="margin:0">After downloading <code>cc-&lt;name&gt;</code>, send it to the user. They run:</p>
 <pre style="background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-family:var(--mono);font-size:12px;overflow-x:auto;margin:8px 0 0">chmod +x cc-&lt;name&gt;
 ./cc-&lt;name&gt; install      # install as 'ccg' system-wide (optional)
@@ -208,6 +209,10 @@ export function renderDashboard(): string {
     <div class="card">
       <h2>Requests over time (per client)</h2>
       <div id="charts" class="grid"></div>
+    </div>
+    <div class="card">
+      <h2>By model</h2>
+      <div id="modelsTable"></div>
     </div>
     <div class="card">
       <h2>
@@ -271,7 +276,24 @@ export function renderDashboard(): string {
 (() => {
   const range = () => document.getElementById('rangeSel').value;
 
-  const fmtNum = (n) => n.toLocaleString();
+  const fmtNum = (n) => (n || 0).toLocaleString();
+  const fmtTokens = (n) => {
+    n = n || 0;
+    if (n < 1000) return String(n);
+    if (n < 1_000_000) return (n / 1000).toFixed(1).replace(/\\.0$/, '') + 'k';
+    return (n / 1_000_000).toFixed(2).replace(/\\.00$/, '') + 'M';
+  };
+  const fmtCost = (n) => {
+    n = n || 0;
+    if (n === 0) return '$0';
+    if (n < 0.01) return '$' + n.toFixed(4);
+    if (n < 100) return '$' + n.toFixed(2);
+    return '$' + Math.round(n).toLocaleString();
+  };
+  const shortModel = (m) => {
+    if (!m) return '—';
+    return m.replace(/^claude-/, '').replace(/-\\d{8}$/, '');
+  };
   const fmtAgo = (ts) => {
     const d = Math.max(0, Date.now() - ts);
     if (d < 1000) return 'just now';
@@ -299,8 +321,11 @@ export function renderDashboard(): string {
   const renderTopStats = (data) => {
     const t = data.totals;
     const errRate = t.total ? ((t.errors / t.total) * 100).toFixed(1) : '0.0';
+    const totalTokens = (t.inputTokens || 0) + (t.outputTokens || 0);
     const html = [
       ['Total requests', fmtNum(t.total)],
+      ['Total cost', fmtCost(t.costUsd)],
+      ['Total tokens', fmtTokens(totalTokens)],
       ['Active clients', fmtNum(data.clients.length)],
       ['Errors', fmtNum(t.errors) + ' (' + errRate + '%)'],
       ['Uptime', fmtUptime(data.uptimeMs)],
@@ -310,6 +335,39 @@ export function renderDashboard(): string {
         <div class="label">\${label}</div>
       </div>\`).join('');
     document.getElementById('topStats').innerHTML = html;
+  };
+
+  const renderModels = (data) => {
+    const el = document.getElementById('modelsTable');
+    if (!data.models || !data.models.length) {
+      el.innerHTML = '<div class="empty">No model usage recorded yet</div>';
+      return;
+    }
+    const rows = data.models.map(m => {
+      const totalTokens = (m.inputTokens || 0) + (m.outputTokens || 0);
+      return \`<tr>
+        <td><strong>\${shortModel(m.model)}</strong></td>
+        <td class="num">\${fmtNum(m.total)}</td>
+        <td class="num">\${fmtTokens(m.inputTokens)}</td>
+        <td class="num">\${fmtTokens(m.outputTokens)}</td>
+        <td class="num">\${fmtTokens(m.cacheReadTokens)}</td>
+        <td class="num">\${fmtTokens(m.cacheCreationTokens)}</td>
+        <td class="num"><strong>\${fmtCost(m.costUsd)}</strong></td>
+      </tr>\`;
+    }).join('');
+    el.innerHTML = \`
+      <table>
+        <thead><tr>
+          <th>Model</th>
+          <th class="num">Calls</th>
+          <th class="num">Input</th>
+          <th class="num">Output</th>
+          <th class="num">Cache read</th>
+          <th class="num">Cache write</th>
+          <th class="num">Cost</th>
+        </tr></thead>
+        <tbody>\${rows}</tbody>
+      </table>\`;
   };
 
   const renderCharts = (data) => {
@@ -346,10 +404,13 @@ export function renderDashboard(): string {
     }
     const rows = data.clients.map(c => {
       const s = statusClass(c.byStatus);
+      const totalTokens = (c.inputTokens || 0) + (c.outputTokens || 0);
       return \`<tr>
         <td><strong>\${c.name}</strong></td>
         <td class="num">\${fmtNum(c.total)}</td>
-        <td><span class="pill ok">\${s.ok} 2xx</span> <span class="pill warn">\${s.warn} 4xx</span> <span class="pill err">\${s.err} 5xx</span></td>
+        <td class="num" title="input \${fmtNum(c.inputTokens)} · output \${fmtNum(c.outputTokens)} · cache_r \${fmtNum(c.cacheReadTokens)} · cache_w \${fmtNum(c.cacheCreationTokens)}">\${fmtTokens(totalTokens)}</td>
+        <td class="num"><strong>\${fmtCost(c.costUsd)}</strong></td>
+        <td><span class="pill ok">\${s.ok}</span> <span class="pill warn">\${s.warn}</span> <span class="pill err">\${s.err}</span></td>
         <td class="num">\${c.avgDurationMs}ms</td>
         <td class="ago">\${fmtAgo(c.lastSeen)}</td>
       </tr>\`;
@@ -357,7 +418,13 @@ export function renderDashboard(): string {
     document.getElementById('clientsTable').innerHTML = \`
       <table>
         <thead><tr>
-          <th>Client</th><th class="num">Total</th><th>Status</th><th class="num">Avg</th><th>Last seen</th>
+          <th>Client</th>
+          <th class="num">Calls</th>
+          <th class="num">Tokens</th>
+          <th class="num">Cost</th>
+          <th>2xx / 4xx / 5xx</th>
+          <th class="num">Avg</th>
+          <th>Last seen</th>
         </tr></thead>
         <tbody>\${rows}</tbody>
       </table>\`;
@@ -370,6 +437,10 @@ export function renderDashboard(): string {
     }
     const rows = data.recent.map(r => {
       const cls = r.status >= 500 ? 'err' : r.status >= 400 ? 'warn' : 'ok';
+      const tt = (r.inputTokens || 0) + (r.outputTokens || 0);
+      const tokenLabel = tt
+        ? fmtTokens(tt) + ' (' + fmtTokens(r.inputTokens) + '↓ ' + fmtTokens(r.outputTokens) + '↑)'
+        : '—';
       return \`<tr>
         <td class="ago">\${fmtAgo(r.ts)}</td>
         <td>\${r.client}</td>
@@ -377,12 +448,16 @@ export function renderDashboard(): string {
         <td class="path" title="\${r.path}">\${r.path}</td>
         <td><span class="pill \${cls}">\${r.status}</span></td>
         <td class="num">\${r.durationMs}ms</td>
+        <td class="num" title="model: \${r.model || '—'}">\${tokenLabel}</td>
+        <td class="num">\${r.costUsd ? fmtCost(r.costUsd) : '—'}</td>
       </tr>\`;
     }).join('');
     document.getElementById('recentTable').innerHTML = \`
       <table>
         <thead><tr>
-          <th>When</th><th>Client</th><th>Method</th><th>Path</th><th>Status</th><th class="num">Duration</th>
+          <th>When</th><th>Client</th><th>Method</th><th>Path</th>
+          <th>Status</th><th class="num">Duration</th>
+          <th class="num">Tokens</th><th class="num">Cost</th>
         </tr></thead>
         <tbody>\${rows}</tbody>
       </table>\`;
@@ -404,6 +479,7 @@ export function renderDashboard(): string {
       currentData = await res.json();
       renderTopStats(currentData);
       renderCharts(currentData);
+      renderModels(currentData);
       renderClients(currentData);
       renderRecent(currentData);
       document.getElementById('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
