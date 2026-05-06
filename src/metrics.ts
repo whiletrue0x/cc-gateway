@@ -285,10 +285,42 @@ export function getMetricsSnapshot() {
     )
     .all(RECENT_LIMIT) as RequestRecord[]
 
+  // Period summaries — easy to read "today / 7d / 30d" cost & usage
+  const day = 24 * HOUR_MS
+  const periods = [
+    { key: 'today', label: 'Today',     since: now - day },
+    { key: '7d',    label: 'Last 7d',   since: now - 7 * day },
+    { key: '30d',   label: 'Last 30d',  since: now - 30 * day },
+  ]
+  const periodStmt = db.prepare(
+    `SELECT
+      COUNT(*) as total,
+      SUM(input_tokens) as input_tokens,
+      SUM(output_tokens) as output_tokens,
+      SUM(cache_read_tokens) as cache_read_tokens,
+      SUM(cache_creation_tokens) as cache_creation_tokens,
+      SUM(cost_usd) as cost_usd
+    FROM request_metrics WHERE ts >= ?`,
+  )
+  const periodSummary = periods.map((p) => {
+    const r = periodStmt.get(p.since) as any
+    return {
+      key: p.key,
+      label: p.label,
+      total: r.total || 0,
+      inputTokens: r.input_tokens || 0,
+      outputTokens: r.output_tokens || 0,
+      cacheReadTokens: r.cache_read_tokens || 0,
+      cacheCreationTokens: r.cache_creation_tokens || 0,
+      costUsd: r.cost_usd || 0,
+    }
+  })
+
   return {
     now,
     uptimeMs: now - startedAt,
     totals,
+    periods: periodSummary,
     clients,
     models,
     minuteSeries,

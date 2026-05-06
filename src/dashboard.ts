@@ -190,12 +190,17 @@ export function renderDashboard(): string {
 <main>
   <div class="grid">
     <div class="row" id="topStats"></div>
+    <div class="card">
+      <h2>Cost &amp; usage by period</h2>
+      <div id="periodTable"></div>
+    </div>
     <details class="card" id="aboutCard">
       <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">
         How to use this dashboard
       </summary>
       <div style="margin-top:12px;font-size:13px;line-height:1.6;color:var(--fg)">
         <p style="margin:0 0 10px"><strong>Stats row</strong> — totals across the gateway's full history (persisted in SQLite): requests, accumulated cost (USD list price), tokens, active clients, errors, uptime.</p>
+        <p style="margin:0 0 10px"><strong>Cost &amp; usage by period</strong> — same totals split by Today / Last 7d / Last 30d / All time so you can track spend trend.</p>
         <p style="margin:0 0 10px"><strong>Requests over time</strong> — per-client traffic. Toggle <em>Last 60 min</em> / <em>Last 24 h</em>.</p>
         <p style="margin:0 0 10px"><strong>By model</strong> — per-model totals: calls, input/output/cache tokens, and cost. Cost uses Anthropic public list prices.</p>
         <p style="margin:0 0 10px"><strong>Clients</strong> — every entry under <code>auth.tokens</code>, with their lifetime calls / tokens / cost. Click <strong>+ Add client</strong> to generate a token, append it to <code>config.yaml</code>, and download a launcher script.</p>
@@ -337,6 +342,39 @@ export function renderDashboard(): string {
         <div class="label">\${label}</div>
       </div>\`).join('');
     document.getElementById('topStats').innerHTML = html;
+  };
+
+  const renderPeriods = (data) => {
+    const t = data.totals;
+    const periods = (data.periods || []).concat([{
+      key: 'all', label: 'All time',
+      total: t.total,
+      inputTokens: t.inputTokens,
+      outputTokens: t.outputTokens,
+      cacheReadTokens: t.cacheReadTokens,
+      cacheCreationTokens: t.cacheCreationTokens,
+      costUsd: t.costUsd,
+    }]);
+    const rows = periods.map(p => \`<tr>
+      <td><strong>\${p.label}</strong></td>
+      <td class="num">\${fmtNum(p.total)}</td>
+      <td class="num" title="\${fmtNum(p.inputTokens)} tokens">\${fmtTokens(p.inputTokens)}</td>
+      <td class="num" title="\${fmtNum(p.outputTokens)} tokens">\${fmtTokens(p.outputTokens)}</td>
+      <td class="num" title="cache read \${fmtNum(p.cacheReadTokens)} · cache write \${fmtNum(p.cacheCreationTokens)}">\${fmtTokens((p.cacheReadTokens || 0) + (p.cacheCreationTokens || 0))}</td>
+      <td class="num"><strong>\${fmtCost(p.costUsd)}</strong></td>
+    </tr>\`).join('');
+    document.getElementById('periodTable').innerHTML = \`
+      <table>
+        <thead><tr>
+          <th>Period</th>
+          <th class="num">Calls</th>
+          <th class="num">Input</th>
+          <th class="num">Output</th>
+          <th class="num">Cache</th>
+          <th class="num">Cost</th>
+        </tr></thead>
+        <tbody>\${rows}</tbody>
+      </table>\`;
   };
 
   const renderModels = (data) => {
@@ -489,6 +527,7 @@ export function renderDashboard(): string {
       }
       currentData = await res.json();
       renderTopStats(currentData);
+      renderPeriods(currentData);
       renderCharts(currentData);
       renderModels(currentData);
       renderClients(currentData);
