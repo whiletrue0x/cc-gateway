@@ -321,11 +321,13 @@ export function renderDashboard(): string {
   const renderTopStats = (data) => {
     const t = data.totals;
     const errRate = t.total ? ((t.errors / t.total) * 100).toFixed(1) : '0.0';
-    const totalTokens = (t.inputTokens || 0) + (t.outputTokens || 0);
     const html = [
       ['Total requests', fmtNum(t.total)],
       ['Total cost', fmtCost(t.costUsd)],
-      ['Total tokens', fmtTokens(totalTokens)],
+      ['Input tokens', fmtTokens(t.inputTokens)],
+      ['Output tokens', fmtTokens(t.outputTokens)],
+      ['Cache read', fmtTokens(t.cacheReadTokens)],
+      ['Cache write', fmtTokens(t.cacheCreationTokens)],
       ['Active clients', fmtNum(data.clients.length)],
       ['Errors', fmtNum(t.errors) + ' (' + errRate + '%)'],
       ['Uptime', fmtUptime(data.uptimeMs)],
@@ -404,11 +406,12 @@ export function renderDashboard(): string {
     }
     const rows = data.clients.map(c => {
       const s = statusClass(c.byStatus);
-      const totalTokens = (c.inputTokens || 0) + (c.outputTokens || 0);
       return \`<tr>
         <td><strong>\${c.name}</strong></td>
         <td class="num">\${fmtNum(c.total)}</td>
-        <td class="num" title="input \${fmtNum(c.inputTokens)} · output \${fmtNum(c.outputTokens)} · cache_r \${fmtNum(c.cacheReadTokens)} · cache_w \${fmtNum(c.cacheCreationTokens)}">\${fmtTokens(totalTokens)}</td>
+        <td class="num" title="\${fmtNum(c.inputTokens)} tokens">\${fmtTokens(c.inputTokens)}</td>
+        <td class="num" title="\${fmtNum(c.outputTokens)} tokens">\${fmtTokens(c.outputTokens)}</td>
+        <td class="num" title="cache read \${fmtNum(c.cacheReadTokens)} · cache write \${fmtNum(c.cacheCreationTokens)}">\${fmtTokens((c.cacheReadTokens || 0) + (c.cacheCreationTokens || 0))}</td>
         <td class="num"><strong>\${fmtCost(c.costUsd)}</strong></td>
         <td><span class="pill ok">\${s.ok}</span> <span class="pill warn">\${s.warn}</span> <span class="pill err">\${s.err}</span></td>
         <td class="num">\${c.avgDurationMs}ms</td>
@@ -420,7 +423,9 @@ export function renderDashboard(): string {
         <thead><tr>
           <th>Client</th>
           <th class="num">Calls</th>
-          <th class="num">Tokens</th>
+          <th class="num" title="Input tokens">Input</th>
+          <th class="num" title="Output tokens">Output</th>
+          <th class="num" title="Cache read + cache write tokens">Cache</th>
           <th class="num">Cost</th>
           <th>2xx / 4xx / 5xx</th>
           <th class="num">Avg</th>
@@ -437,27 +442,33 @@ export function renderDashboard(): string {
     }
     const rows = data.recent.map(r => {
       const cls = r.status >= 500 ? 'err' : r.status >= 400 ? 'warn' : 'ok';
-      const tt = (r.inputTokens || 0) + (r.outputTokens || 0);
-      const tokenLabel = tt
-        ? fmtTokens(tt) + ' (' + fmtTokens(r.inputTokens) + '↓ ' + fmtTokens(r.outputTokens) + '↑)'
-        : '—';
+      const hasUsage = (r.inputTokens || r.outputTokens || r.cacheReadTokens || r.cacheCreationTokens);
       return \`<tr>
         <td class="ago">\${fmtAgo(r.ts)}</td>
         <td>\${r.client}</td>
-        <td>\${r.method}</td>
-        <td class="path" title="\${r.path}">\${r.path}</td>
+        <td><span class="meta">\${shortModel(r.model)}</span></td>
+        <td class="path" title="\${r.method} \${r.path}">\${r.path}</td>
         <td><span class="pill \${cls}">\${r.status}</span></td>
         <td class="num">\${r.durationMs}ms</td>
-        <td class="num" title="model: \${r.model || '—'}">\${tokenLabel}</td>
+        <td class="num" title="\${fmtNum(r.inputTokens)} input tokens">\${hasUsage ? fmtTokens(r.inputTokens) : '—'}</td>
+        <td class="num" title="\${fmtNum(r.outputTokens)} output tokens">\${hasUsage ? fmtTokens(r.outputTokens) : '—'}</td>
+        <td class="num" title="cache read \${fmtNum(r.cacheReadTokens)} · cache write \${fmtNum(r.cacheCreationTokens)}">\${hasUsage ? fmtTokens((r.cacheReadTokens || 0) + (r.cacheCreationTokens || 0)) : '—'}</td>
         <td class="num">\${r.costUsd ? fmtCost(r.costUsd) : '—'}</td>
       </tr>\`;
     }).join('');
     document.getElementById('recentTable').innerHTML = \`
       <table>
         <thead><tr>
-          <th>When</th><th>Client</th><th>Method</th><th>Path</th>
-          <th>Status</th><th class="num">Duration</th>
-          <th class="num">Tokens</th><th class="num">Cost</th>
+          <th>When</th>
+          <th>Client</th>
+          <th>Model</th>
+          <th>Path</th>
+          <th>Status</th>
+          <th class="num">Duration</th>
+          <th class="num">Input</th>
+          <th class="num">Output</th>
+          <th class="num">Cache</th>
+          <th class="num">Cost</th>
         </tr></thead>
         <tbody>\${rows}</tbody>
       </table>\`;
