@@ -161,6 +161,13 @@ async function handleRequest(
   delete rewrittenHeaders['x-api-key']
   rewrittenHeaders['authorization'] = `Bearer ${oauthToken}`
 
+  // Force plaintext upstream so the SSE/JSON usage parser can read response
+  // bytes directly. If we forwarded Accept-Encoding: gzip, Anthropic would
+  // compress and the parser would silently fail to extract token counts.
+  delete rewrittenHeaders['accept-encoding']
+  delete rewrittenHeaders['Accept-Encoding']
+  rewrittenHeaders['accept-encoding'] = 'identity'
+
   const oauthBetaFlag = 'oauth-2025-04-20'
   const existingBeta = rewrittenHeaders['anthropic-beta']
   if (existingBeta) {
