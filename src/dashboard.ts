@@ -156,6 +156,20 @@ export function renderDashboard(): string {
   .modal-box input:focus, .modal-box select:focus { outline: none; border-color: var(--accent); }
   .error { background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3); color: var(--err); padding: 8px 10px; border-radius: 6px; font-size: 13px; }
   .config-info { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  .snippet-block { position: relative; }
+  .snippet-block pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-family: var(--mono); font-size: 12px;
+    color: var(--fg); margin: 0; overflow-x: auto; white-space: pre;
+  }
+  .copy-btn {
+    position: absolute; top: 6px; right: 6px;
+    padding: 4px 10px; font-size: 11px;
+    background: var(--panel-2); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+  }
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .copy-btn.copied { color: var(--ok); border-color: var(--ok); }
 </style>
 </head>
 <body>
@@ -176,6 +190,21 @@ export function renderDashboard(): string {
 <main>
   <div class="grid">
     <div class="row" id="topStats"></div>
+    <details class="card" id="aboutCard">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">
+        How to use this dashboard
+      </summary>
+      <div style="margin-top:12px;font-size:13px;line-height:1.6;color:var(--fg)">
+        <p style="margin:0 0 10px"><strong>Stats row</strong> — totals across the lifetime of this gateway: total requests, active clients (with traffic), errors, and process uptime.</p>
+        <p style="margin:0 0 10px"><strong>Requests over time</strong> — per-client traffic. Toggle <em>Last 60 min</em> / <em>Last 24 h</em> in the top-right.</p>
+        <p style="margin:0 0 10px"><strong>Clients</strong> — every entry under <code>auth.tokens</code>. Click <strong>+ Add client</strong> to generate a token, append it to <code>config.yaml</code>, and download a launcher script.</p>
+        <p style="margin:0 0 10px"><strong>Recent requests</strong> — last 50 requests with status code and duration. Updates every 5 seconds.</p>
+        <p style="margin:0">After downloading <code>cc-&lt;name&gt;</code>, send it to the user. They run:</p>
+<pre style="background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-family:var(--mono);font-size:12px;overflow-x:auto;margin:8px 0 0">chmod +x cc-&lt;name&gt;
+./cc-&lt;name&gt; install      # install as 'ccg' system-wide (optional)
+./cc-&lt;name&gt;              # or run directly without installing</pre>
+      </div>
+    </details>
     <div class="card">
       <h2>Requests over time (per client)</h2>
       <div id="charts" class="grid"></div>
@@ -197,21 +226,44 @@ export function renderDashboard(): string {
 
 <div id="addClientModal" class="modal" style="display:none">
   <div class="modal-box">
-    <h3>Add client</h3>
-    <p class="meta" style="margin:0 0 16px">Generates a token, appends it to <code>config.yaml</code>, and downloads a launcher script.</p>
-    <label>Client name</label>
-    <input id="cName" placeholder="e.g. vuluu2k" autocomplete="off" />
-    <label>Gateway address</label>
-    <input id="cAddr" placeholder="ccg.example.com" autocomplete="off" />
-    <label>Scheme</label>
-    <select id="cScheme">
-      <option value="https">https</option>
-      <option value="http">http</option>
-    </select>
-    <div id="cError" class="error" style="display:none;margin-top:12px"></div>
-    <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
-      <button id="cCancel" type="button">Cancel</button>
-      <button id="cSubmit" type="button" class="primary">Create &amp; download</button>
+    <div id="modalForm">
+      <h3>Add client</h3>
+      <p class="meta" style="margin:0 0 16px">Generates a token, appends it to <code>config.yaml</code>, and downloads a launcher script.</p>
+      <label>Client name</label>
+      <input id="cName" placeholder="e.g. vuluu2k" autocomplete="off" />
+      <label>Gateway address</label>
+      <input id="cAddr" placeholder="ccg.example.com" autocomplete="off" />
+      <label>Scheme</label>
+      <select id="cScheme">
+        <option value="https">https</option>
+        <option value="http">http</option>
+      </select>
+      <div id="cError" class="error" style="display:none;margin-top:12px"></div>
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+        <button id="cCancel" type="button">Cancel</button>
+        <button id="cSubmit" type="button" class="primary">Create &amp; download</button>
+      </div>
+    </div>
+
+    <div id="modalSuccess" style="display:none">
+      <h3>Client created · <span id="successName"></span></h3>
+      <p class="meta" style="margin:0 0 16px">File <code id="successFile"></code> has been downloaded. Send it to the user and ask them to run:</p>
+      <div class="snippet-block">
+        <pre id="successCmd"></pre>
+        <button id="copyCmdBtn" type="button" class="copy-btn">Copy</button>
+      </div>
+      <p class="meta" style="margin:14px 0 8px">Or to install system-wide as <code>ccg</code>:</p>
+      <div class="snippet-block">
+        <pre id="installCmd"></pre>
+        <button id="copyInstallBtn" type="button" class="copy-btn">Copy</button>
+      </div>
+      <p class="meta" style="margin:14px 0 0;font-size:12px">
+        Prerequisites: claude code installed (<code>npm install -g @anthropic-ai/claude-code</code>).
+        On macOS, if Gatekeeper blocks the file: <code>xattr -d com.apple.quarantine cc-&lt;name&gt;</code>.
+      </p>
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+        <button id="successDone" type="button" class="primary">Done</button>
+      </div>
     </div>
   </div>
 </div>
@@ -420,10 +472,47 @@ export function renderDashboard(): string {
     document.getElementById('cAddr').value = location.host;
     document.getElementById('cScheme').value = location.protocol === 'http:' ? 'http' : 'https';
     showError(null);
+    document.getElementById('modalForm').style.display = 'block';
+    document.getElementById('modalSuccess').style.display = 'none';
     document.getElementById('addClientModal').style.display = 'flex';
     setTimeout(() => document.getElementById('cName').focus(), 0);
   };
   const closeModal = () => { document.getElementById('addClientModal').style.display = 'none'; };
+
+  const showSuccess = (name) => {
+    document.getElementById('modalForm').style.display = 'none';
+    const sucEl = document.getElementById('modalSuccess');
+    sucEl.style.display = 'block';
+    document.getElementById('successName').textContent = name;
+    document.getElementById('successFile').textContent = 'cc-' + name;
+    document.getElementById('successCmd').textContent =
+      'chmod +x cc-' + name + ' && ./cc-' + name;
+    document.getElementById('installCmd').textContent =
+      'chmod +x cc-' + name + ' && ./cc-' + name + ' install';
+  };
+
+  const wireCopyButton = (btnId, sourceId) => {
+    document.getElementById(btnId).addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const text = document.getElementById(sourceId).textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+          btn.classList.remove('copied');
+        }, 1500);
+      } catch {
+        // fallback: select text
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById(sourceId));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    });
+  };
 
   const submitClient = async () => {
     const name = document.getElementById('cName').value.trim();
@@ -453,7 +542,7 @@ export function renderDashboard(): string {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      closeModal();
+      showSuccess(name);
       loadClients();
     } finally {
       submitBtn.disabled = false;
@@ -463,6 +552,9 @@ export function renderDashboard(): string {
   document.getElementById('addClientBtn').addEventListener('click', openModal);
   document.getElementById('cCancel').addEventListener('click', closeModal);
   document.getElementById('cSubmit').addEventListener('click', submitClient);
+  document.getElementById('successDone').addEventListener('click', closeModal);
+  wireCopyButton('copyCmdBtn', 'successCmd');
+  wireCopyButton('copyInstallBtn', 'installCmd');
   document.getElementById('addClientModal').addEventListener('click', (e) => {
     if (e.target.id === 'addClientModal') closeModal();
   });
