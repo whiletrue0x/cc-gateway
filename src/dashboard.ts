@@ -114,6 +114,9 @@ export function renderDashboard(): string {
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
   tr:last-child td { border-bottom: none; }
+  .scroll-y { max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .scroll-y table { font-size: 13px; }
+  .scroll-y thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; box-shadow: 0 1px 0 var(--border); }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-family: var(--mono); }
   .pill.ok { background: rgba(63,185,80,.15); color: var(--ok); }
@@ -474,11 +477,15 @@ export function renderDashboard(): string {
   };
 
   const renderRecent = (data) => {
+    const host = document.getElementById('recentTable');
     if (!data.recent.length) {
-      document.getElementById('recentTable').innerHTML = '<div class="empty">No requests yet</div>';
+      host.innerHTML = '<div class="empty">No requests yet</div>';
       return;
     }
-    const rows = data.recent.map(r => {
+    // Server returns newest-first; flip so newest sits at the bottom of the
+    // scrolling viewport (chat/log style).
+    const ordered = data.recent.slice().reverse();
+    const rows = ordered.map(r => {
       const cls = r.status >= 500 ? 'err' : r.status >= 400 ? 'warn' : 'ok';
       const hasUsage = (r.inputTokens || r.outputTokens || r.cacheReadTokens || r.cacheCreationTokens);
       return \`<tr>
@@ -494,22 +501,36 @@ export function renderDashboard(): string {
         <td class="num">\${r.costUsd ? fmtCost(r.costUsd) : '—'}</td>
       </tr>\`;
     }).join('');
-    document.getElementById('recentTable').innerHTML = \`
-      <table>
-        <thead><tr>
-          <th>When</th>
-          <th>Client</th>
-          <th>Model</th>
-          <th>Path</th>
-          <th>Status</th>
-          <th class="num">Duration</th>
-          <th class="num">Input</th>
-          <th class="num">Output</th>
-          <th class="num">Cache</th>
-          <th class="num">Cost</th>
-        </tr></thead>
-        <tbody>\${rows}</tbody>
-      </table>\`;
+
+    // Preserve the user's scroll intent: only auto-stick to the bottom if they
+    // were already near it (or this is the first render). If they scrolled up
+    // to inspect older requests, leave the scroll position alone.
+    const prev = host.querySelector('.scroll-y');
+    const wasNearBottom = !prev || (prev.scrollHeight - prev.scrollTop - prev.clientHeight) < 32;
+
+    host.innerHTML = \`
+      <div class="scroll-y">
+        <table>
+          <thead><tr>
+            <th>When</th>
+            <th>Client</th>
+            <th>Model</th>
+            <th>Path</th>
+            <th>Status</th>
+            <th class="num">Duration</th>
+            <th class="num">Input</th>
+            <th class="num">Output</th>
+            <th class="num">Cache</th>
+            <th class="num">Cost</th>
+          </tr></thead>
+          <tbody>\${rows}</tbody>
+        </table>
+      </div>\`;
+
+    if (wasNearBottom) {
+      const next = host.querySelector('.scroll-y');
+      if (next) next.scrollTop = next.scrollHeight;
+    }
   };
 
   let currentData = null;
