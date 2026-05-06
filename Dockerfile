@@ -18,4 +18,8 @@ COPY package.json ./
 RUN mkdir -p /app/data
 
 EXPOSE 8443
-CMD ["node", "dist/index.js", "/app/config.yaml"]
+# Config path defaults to /app/data/config.yaml (persistent volume).
+# If missing on first start, the container auto-generates it from
+# CCG_REFRESH_TOKEN env or a mounted credentials.json. Override path with
+# CCG_CONFIG_PATH env or by passing an arg to node.
+CMD ["node", "dist/index.js"]

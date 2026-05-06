@@ -8,14 +8,25 @@ import { initAuth } from './auth.js'
 import { initDb } from './db.js'
 import { initMetrics } from './metrics.js'
 import { countUsers } from './users.js'
+import { bootstrapConfigIfMissing } from './bootstrap-config.js'
 
-const configPath = process.argv[2]
+// Resolve the config path: explicit arg > CCG_CONFIG_PATH env > /app/data/config.yaml.
+// /app/data is the persistent volume so the auto-generated config survives restarts.
+const configPath =
+  process.argv[2] ||
+  process.env.CCG_CONFIG_PATH ||
+  '/app/data/config.yaml'
 
 try {
+  if (!bootstrapConfigIfMissing(configPath)) {
+    process.exit(1)
+  }
+
   const config = loadConfig(configPath)
   setLogLevel(config.logging.level)
 
   log('info', 'CC Gateway starting...')
+  log('info', `Config: ${resolve(configPath)}`)
 
   const dbPath = config.db?.path || './data/ccg.db'
   initDb(dbPath)
@@ -31,7 +42,7 @@ try {
   startProxy(config)
 
   // Hot-reload auth.tokens on config changes (poll-based — works with bind mounts)
-  const watchPath = resolve(configPath || 'config.yaml')
+  const watchPath = resolve(configPath)
   let lastTokenSig = JSON.stringify(config.auth.tokens)
   watchFile(watchPath, { interval: 2000 }, () => {
     try {

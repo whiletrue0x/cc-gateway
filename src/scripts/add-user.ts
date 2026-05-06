@@ -45,7 +45,10 @@ async function main() {
     process.exit(1)
   }
 
-  const configPath = process.argv[3]
+  const configPath =
+    process.argv[3] ||
+    process.env.CCG_CONFIG_PATH ||
+    '/app/data/config.yaml'
   const config = loadConfig(configPath)
   if (!config.db?.path) {
     console.error('config: db.path is required')

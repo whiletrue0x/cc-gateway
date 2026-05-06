@@ -11,7 +11,11 @@ export interface ClientEntry {
 const NAME_RE = /^[a-zA-Z0-9_.-]{1,64}$/
 
 function configPath(): string {
-  return resolve(process.argv[2] || 'config.yaml')
+  return resolve(
+    process.argv[2] ||
+    process.env.CCG_CONFIG_PATH ||
+    '/app/data/config.yaml',
+  )
 }
 
 function loadDoc(path: string) {

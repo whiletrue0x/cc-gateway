@@ -9,12 +9,13 @@ services:
     expose:
       - "8443"
     volumes:
-      # config.yaml is provided via Coolify's "File Mount" (Storage tab) so the
-      # secrets stay out of git. The dashboard can append/remove client tokens
-      # at runtime; watchFile picks up edits within ~2s.
-      # For local dev, copy config.example.yaml → config.yaml and uncomment:
-      # - ./config.yaml:/app/config.yaml
+      # ccg_data persists both the SQLite DB and the auto-generated config.yaml
+      # (so device_id + tokens survive restarts/redeploys).
       - ccg_data:/app/data
+      # Optional: mount your existing claude credentials so the gateway can
+      # bootstrap config.yaml on first start without setting CCG_REFRESH_TOKEN.
+      # Uncomment + adjust the host path:
+      # - /root/.claude/.credentials.json:/app/data/claude-credentials.json:ro
     restart: unless-stopped
     networks:
       - coolify
