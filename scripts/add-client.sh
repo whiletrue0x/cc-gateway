@@ -64,7 +64,18 @@ fi
 
 cat >> "$LAUNCHER" <<'SCRIPT_BODY'
 
-INSTALL_PATH="/usr/local/bin/ccg"
+# Pick a writable install dir. Apple Silicon Macs ship without /usr/local/bin
+# by default; Intel Macs and most Linux distros have it. Fall back to
+# ~/.local/bin so install always works without sudo as a last resort.
+if [[ -d /opt/homebrew/bin ]]; then
+  INSTALL_DIR="/opt/homebrew/bin"
+elif [[ -d /usr/local/bin ]]; then
+  INSTALL_DIR="/usr/local/bin"
+else
+  INSTALL_DIR="$HOME/.local/bin"
+  mkdir -p "$INSTALL_DIR"
+fi
+INSTALL_PATH="$INSTALL_DIR/ccg"
 SELF_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 # Detect shell RC file
 case "$SHELL" in
@@ -79,9 +90,20 @@ ALIAS_TAG="# cc-gateway alias"
 
 case "$1" in
   install)
-    cp "$0" "$INSTALL_PATH" 2>/dev/null || sudo cp "$0" "$INSTALL_PATH"
-    chmod +x "$INSTALL_PATH"
-    echo "Installed as 'ccg'."
+    if cp "$0" "$INSTALL_PATH" 2>/dev/null; then :; else
+      sudo cp "$0" "$INSTALL_PATH" || { echo "Install failed: cannot write to $INSTALL_PATH"; exit 1; }
+    fi
+    chmod +x "$INSTALL_PATH" 2>/dev/null || sudo chmod +x "$INSTALL_PATH"
+    echo "Installed as 'ccg' at $INSTALL_PATH."
+    case ":$PATH:" in
+      *":$INSTALL_DIR:"*) ;;
+      *)
+        echo ""
+        echo "Note: $INSTALL_DIR is not on your PATH."
+        echo "  Add this line to $RC_FILE and reopen your terminal:"
+        echo "    export PATH=\"$INSTALL_DIR:\$PATH\""
+        ;;
+    esac
     echo ""
     echo "  ccg              Start Claude Code through gateway"
     echo "  ccg hijack       Make 'claude' also go through gateway"
