@@ -114,9 +114,24 @@ export function renderDashboard(): string {
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
   tr:last-child td { border-bottom: none; }
-  .scroll-y { max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
-  .scroll-y table { font-size: 13px; }
-  .scroll-y thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; box-shadow: 0 1px 0 var(--border); }
+  .scroll-y {
+    max-height: 480px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--fg);
+    color-scheme: dark;
+    scrollbar-color: #2c333d var(--panel);
+    scrollbar-width: thin;
+  }
+  .scroll-y::-webkit-scrollbar { width: 10px; }
+  .scroll-y::-webkit-scrollbar-track { background: var(--panel); }
+  .scroll-y::-webkit-scrollbar-thumb { background: #2c333d; border-radius: 6px; border: 2px solid var(--panel); }
+  .scroll-y::-webkit-scrollbar-thumb:hover { background: #3a4250; }
+  .scroll-y table { font-size: 13px; background: var(--panel); }
+  .scroll-y thead th {
+    position: sticky; top: 0;
+    background: var(--panel-2); color: var(--muted);
+    z-index: 1; box-shadow: 0 1px 0 var(--border);
+  }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-family: var(--mono); }
   .pill.ok { background: rgba(63,185,80,.15); color: var(--ok); }
