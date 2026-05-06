@@ -11,7 +11,8 @@
     "dev": "tsx watch src/index.ts",
     "generate-token": "tsx src/scripts/generate-token.ts",
     "generate-identity": "tsx src/scripts/generate-identity.ts",
-    "add-user": "tsx src/scripts/add-user.ts",
+    "add-user": "node dist/scripts/add-user.js",
+    "add-user:dev": "tsx src/scripts/add-user.ts",
     "test": "tsx tests/rewriter.test.ts"
   },
   "dependencies": {
