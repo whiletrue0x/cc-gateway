@@ -3,6 +3,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { readFileSync } from 'fs'
 import { request as httpsRequest } from 'https'
 import { URL } from 'url'
+import zlib from 'zlib'
 import type { Config } from './config.js'
 import { authenticate, initAuth } from './auth.js'
 import { getAccessToken } from './oauth.js'
@@ -161,13 +162,6 @@ async function handleRequest(
   delete rewrittenHeaders['x-api-key']
   rewrittenHeaders['authorization'] = `Bearer ${oauthToken}`
 
-  // Force plaintext upstream so the SSE/JSON usage parser can read response
-  // bytes directly. If we forwarded Accept-Encoding: gzip, Anthropic would
-  // compress and the parser would silently fail to extract token counts.
-  delete rewrittenHeaders['accept-encoding']
-  delete rewrittenHeaders['Accept-Encoding']
-  rewrittenHeaders['accept-encoding'] = 'identity'
-
   const oauthBetaFlag = 'oauth-2025-04-20'
   const existingBeta = rewrittenHeaders['anthropic-beta']
   if (existingBeta) {
@@ -236,17 +230,40 @@ async function handleRequest(
       }
 
       if (parser) {
+        // Forward raw upstream bytes to the client untouched so the response
+        // is byte-identical to a direct Anthropic call (preserves whatever
+        // Content-Encoding upstream chose). For the parser, decompress a
+        // local copy in-process so token counts stay readable regardless of
+        // gzip/br/deflate.
+        const encoding = String(proxyRes.headers['content-encoding'] || '')
+          .toLowerCase()
+          .trim()
+        let decoder: zlib.Gunzip | zlib.BrotliDecompress | zlib.Inflate | null = null
+        if (encoding === 'gzip') decoder = zlib.createGunzip()
+        else if (encoding === 'br') decoder = zlib.createBrotliDecompress()
+        else if (encoding === 'deflate') decoder = zlib.createInflate()
+
+        if (decoder) {
+          decoder.on('data', (decoded: Buffer) => parser.feed(decoded))
+          decoder.on('error', (err: Error) => {
+            log('warn', `Usage decoder failed (${encoding}): ${err.message}`)
+          })
+        }
+
         proxyRes.on('data', (chunk: Buffer) => {
           res.write(chunk)
-          parser.feed(chunk)
+          if (decoder) decoder.write(chunk)
+          else parser.feed(chunk)
         })
         proxyRes.on('end', () => {
+          if (decoder) decoder.end()
           parser.end()
           res.end()
           finalize()
         })
         proxyRes.on('error', (err) => {
           log('error', `Upstream stream error: ${err.message}`)
+          if (decoder) decoder.destroy()
           res.end()
           finalize()
         })
