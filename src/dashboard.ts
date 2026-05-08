@@ -285,9 +285,13 @@ export function renderDashboard(): string {
         <pre id="installCmd"></pre>
         <button id="copyInstallBtn" type="button" class="copy-btn">Copy</button>
       </div>
+      <p class="meta" style="margin:14px 0 8px">On macOS, if Gatekeeper blocks the file:</p>
+      <div class="snippet-block">
+        <pre id="xattrCmd"></pre>
+        <button id="copyXattrBtn" type="button" class="copy-btn">Copy</button>
+      </div>
       <p class="meta" style="margin:14px 0 0;font-size:12px">
         Prerequisites: claude code installed (<code>npm install -g @anthropic-ai/claude-code</code>).
-        On macOS, if Gatekeeper blocks the file: <code>xattr -d com.apple.quarantine cc-&lt;name&gt;</code>.
       </p>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
         <button id="successDone" type="button" class="primary">Done</button>
@@ -651,6 +655,8 @@ export function renderDashboard(): string {
       'chmod +x cc-' + name + ' && ./cc-' + name;
     document.getElementById('installCmd').textContent =
       'chmod +x cc-' + name + ' && ./cc-' + name + ' install';
+    document.getElementById('xattrCmd').textContent =
+      'xattr -d com.apple.quarantine cc-' + name;
   };
 
   const wireCopyButton = (btnId, sourceId) => {
@@ -717,6 +723,7 @@ export function renderDashboard(): string {
   document.getElementById('successDone').addEventListener('click', closeModal);
   wireCopyButton('copyCmdBtn', 'successCmd');
   wireCopyButton('copyInstallBtn', 'installCmd');
+  wireCopyButton('copyXattrBtn', 'xattrCmd');
   document.getElementById('addClientModal').addEventListener('click', (e) => {
     if (e.target.id === 'addClientModal') closeModal();
   });
