@@ -5,12 +5,12 @@ import { request as httpsRequest } from 'https'
 import { URL } from 'url'
 import zlib from 'zlib'
 import type { Config } from './config.js'
-import { authenticate, initAuth } from './auth.js'
+import { authenticate, initAuth, setAuthTokens } from './auth.js'
 import { getAccessToken } from './oauth.js'
 import { rewriteBody, rewriteHeaders } from './rewriter.js'
 import { audit, log } from './logger.js'
 import { getProxyAgent } from './proxy-agent.js'
-import { recordRequest, getMetricsSnapshot } from './metrics.js'
+import { recordRequest, getMetricsSnapshot, getClientCostSince, periodStart } from './metrics.js'
 import { SSEUsageParser } from './usage-parser.js'
 import { computeCost } from './pricing.js'
 import { renderDashboard, renderLogin } from './dashboard.js'
@@ -21,7 +21,56 @@ import {
   clearCookieHeader,
   getSessionFromRequest,
 } from './session.js'
-import { addClient, listClients, removeClient, buildLauncherScript } from './clients.js'
+import { addClient, listClients, removeClient, setClientLimit, buildLauncherScript } from './clients.js'
+import type { CostLimitPeriod } from './config.js'
+
+const USER_MESSAGE_MAX = 200
+
+/** Refresh in-memory token map from current config.yaml on disk. */
+function reloadAuthFromConfig(): void {
+  setAuthTokens(listClients())
+}
+
+/**
+ * Pull the most recent user-authored text out of a /v1/messages request body.
+ * Returns truncated text suitable for a dashboard preview, or '' if not parseable.
+ */
+function extractLastUserMessage(body: Buffer): string {
+  if (!body.length) return ''
+  try {
+    const obj = JSON.parse(body.toString('utf-8'))
+    const msgs = obj?.messages
+    if (!Array.isArray(msgs)) return ''
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i]
+      if (!m || m.role !== 'user') continue
+      let text = ''
+      if (typeof m.content === 'string') {
+        text = m.content
+      } else if (Array.isArray(m.content)) {
+        const parts: string[] = []
+        for (const block of m.content) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            parts.push(block.text)
+          } else if (block?.type === 'tool_result') {
+            // Skip tool_result blocks — keep walking back for an authored prompt
+            continue
+          }
+        }
+        text = parts.join('\n').trim()
+      }
+      if (text) {
+        const flat = text.replace(/\s+/g, ' ').trim()
+        return flat.length > USER_MESSAGE_MAX
+          ? flat.slice(0, USER_MESSAGE_MAX) + '…'
+          : flat
+      }
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
 
 export function startProxy(config: Config) {
   initAuth(config)
@@ -101,8 +150,8 @@ async function handleRequest(
 
   // Dry-run verification - shows what would be rewritten (auth required)
   if (pathname === '/_verify') {
-    const clientName = authenticate(req)
-    if (!clientName) {
+    const entry = authenticate(req)
+    if (!entry) {
       res.writeHead(401, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Unauthorized' }))
       return
@@ -114,12 +163,42 @@ async function handleRequest(
   }
 
   // Authenticate client (proxy-level auth)
-  const clientName = authenticate(req)
-  if (!clientName) {
+  const tokenEntry = authenticate(req)
+  if (!tokenEntry) {
     res.writeHead(401, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Unauthorized - provide client token via x-api-key header' }))
     log('warn', `Unauthorized request: ${method} ${path}`)
     return
+  }
+  const clientName = tokenEntry.name
+
+  // Cost limit enforcement: only gates billable inference (/v1/messages).
+  // Health, settings, event_logging, etc. are free and shouldn't be blocked.
+  if (pathname.startsWith('/v1/messages') && tokenEntry.cost_limit_usd && tokenEntry.cost_limit_usd > 0) {
+    const since = periodStart(tokenEntry.cost_limit_period)
+    const used = getClientCostSince(clientName, since)
+    if (used >= tokenEntry.cost_limit_usd) {
+      const periodLabel = tokenEntry.cost_limit_period || 'lifetime'
+      res.writeHead(429, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        error: 'Cost limit reached',
+        client: clientName,
+        period: periodLabel,
+        used_usd: Number(used.toFixed(4)),
+        limit_usd: tokenEntry.cost_limit_usd,
+      }))
+      log('warn', `Client "${clientName}" blocked: ${periodLabel} cost ${used.toFixed(4)} >= limit ${tokenEntry.cost_limit_usd}`)
+      recordRequest({
+        ts: startedAt,
+        client: clientName,
+        method,
+        path: pathname,
+        status: 429,
+        durationMs: Date.now() - startedAt,
+      })
+      if (config.logging.audit) audit(clientName, method, path, 429)
+      return
+    }
   }
 
   log('info', `Client "${clientName}" → ${method} ${path}`)
@@ -139,6 +218,14 @@ async function handleRequest(
     chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
   }
   let body = Buffer.concat(chunks)
+
+  // Capture last user message for dashboard preview before rewrite (rewrite
+  // doesn't touch authored content, but parsing pre-rewrite avoids re-parsing
+  // a serialized JSON we just produced). Best-effort — never blocks the call.
+  let userMessage = ''
+  if (body.length > 0 && pathname.startsWith('/v1/messages') && method === 'POST') {
+    userMessage = extractLastUserMessage(body)
+  }
 
   // Rewrite identity fields in body
   if (body.length > 0) {
@@ -223,6 +310,7 @@ async function handleRequest(
           cacheReadTokens: usage?.cacheReadTokens,
           cacheCreationTokens: usage?.cacheCreationTokens,
           costUsd: cost,
+          userMessage,
         })
         if (config.logging.audit) {
           audit(clientName, method, path, status)
@@ -288,6 +376,7 @@ async function handleRequest(
       path: pathname,
       status: 502,
       durationMs: Date.now() - startedAt,
+      userMessage,
     })
     if (config.logging.audit) {
       audit(clientName, method, path, 502)
@@ -468,10 +557,17 @@ async function handleDashboardArea(
 
   if (pathname === '/api/clients') {
     if (method === 'GET') {
-      const clients = listClients().map((c) => ({
-        name: c.name,
-        token_preview: c.token.slice(0, 8) + '…' + c.token.slice(-4),
-      }))
+      const clients = listClients().map((c) => {
+        const since = periodStart(c.cost_limit_period)
+        const used = c.cost_limit_usd ? getClientCostSince(c.name, since) : 0
+        return {
+          name: c.name,
+          token_preview: c.token.slice(0, 8) + '…' + c.token.slice(-4),
+          cost_limit_usd: c.cost_limit_usd ?? null,
+          cost_limit_period: c.cost_limit_period ?? null,
+          cost_used_usd: c.cost_limit_usd ? Number(used.toFixed(4)) : null,
+        }
+      })
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ clients }))
       return
@@ -485,7 +581,14 @@ async function handleDashboardArea(
         res.end(JSON.stringify({ error: 'Payload too large' }))
         return
       }
-      let payload: { name?: string; gateway_addr?: string; scheme?: string; format?: string }
+      let payload: {
+        name?: string
+        gateway_addr?: string
+        scheme?: string
+        format?: string
+        cost_limit_usd?: number | null
+        cost_limit_period?: CostLimitPeriod | null
+      }
       try {
         payload = JSON.parse(body.toString('utf-8'))
       } catch {
@@ -505,12 +608,16 @@ async function handleDashboardArea(
       }
       let entry
       try {
-        entry = addClient(name)
+        entry = addClient(name, {
+          cost_limit_usd: payload.cost_limit_usd ?? undefined,
+          cost_limit_period: payload.cost_limit_period ?? undefined,
+        })
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'failed' }))
         return
       }
+      reloadAuthFromConfig()
       log('info', `User "${session.u}" added client "${entry.name}"`)
       const script = buildLauncherScript({
         name: entry.name,
@@ -552,12 +659,51 @@ async function handleDashboardArea(
         res.end(JSON.stringify({ error: 'not found' }))
         return
       }
+      reloadAuthFromConfig()
       log('info', `User "${session.u}" removed client "${name}"`)
       res.writeHead(204)
       res.end()
       return
     }
-    res.writeHead(405, { Allow: 'DELETE' })
+    if (method === 'PATCH') {
+      let body: Buffer
+      try {
+        body = await readBody(req)
+      } catch {
+        res.writeHead(413, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Payload too large' }))
+        return
+      }
+      let payload: { cost_limit_usd?: number | null; cost_limit_period?: CostLimitPeriod | null }
+      try {
+        payload = JSON.parse(body.toString('utf-8'))
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Invalid JSON' }))
+        return
+      }
+      let updated
+      try {
+        updated = setClientLimit(name, {
+          cost_limit_usd: payload.cost_limit_usd ?? null,
+          cost_limit_period: payload.cost_limit_period ?? null,
+        })
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'failed' }))
+        return
+      }
+      reloadAuthFromConfig()
+      log('info', `User "${session.u}" updated limit on client "${name}"`)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        name: updated.name,
+        cost_limit_usd: updated.cost_limit_usd ?? null,
+        cost_limit_period: updated.cost_limit_period ?? null,
+      }))
+      return
+    }
+    res.writeHead(405, { Allow: 'DELETE, PATCH' })
     res.end()
     return
   }

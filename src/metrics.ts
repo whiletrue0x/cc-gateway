@@ -20,6 +20,8 @@ export interface RequestRecord {
   cacheReadTokens?: number
   cacheCreationTokens?: number
   costUsd?: number
+  // Truncated last user message text — for at-a-glance dashboard display
+  userMessage?: string
 }
 
 let startedAt = Date.now()
@@ -48,8 +50,9 @@ export function recordRequest(rec: RequestRecord) {
         `INSERT INTO request_metrics (
           ts, client, method, path, status, duration_ms,
           model, input_tokens, output_tokens,
-          cache_read_tokens, cache_creation_tokens, cost_usd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          cache_read_tokens, cache_creation_tokens, cost_usd,
+          user_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         rec.ts, rec.client, rec.method, rec.path, rec.status, rec.durationMs,
@@ -59,10 +62,43 @@ export function recordRequest(rec: RequestRecord) {
         rec.cacheReadTokens || 0,
         rec.cacheCreationTokens || 0,
         rec.costUsd || 0,
+        rec.userMessage || '',
       )
   } catch (err) {
     // Don't break proxying on metrics failures
   }
+}
+
+/**
+ * Sum of cost_usd for a client since the given timestamp.
+ * sinceTs = 0 means lifetime.
+ */
+export function getClientCostSince(client: string, sinceTs: number): number {
+  try {
+    const row = getDb()
+      .prepare(
+        'SELECT SUM(cost_usd) as cost FROM request_metrics WHERE client = ? AND ts >= ?',
+      )
+      .get(client, sinceTs) as { cost: number | null }
+    return row?.cost || 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Resolve the start-of-window timestamp for a cost-limit period.
+ * UTC-based for stability across server timezones.
+ */
+export function periodStart(period: 'lifetime' | 'monthly' | 'daily' | undefined): number {
+  const now = new Date()
+  if (period === 'daily') {
+    return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  }
+  if (period === 'monthly') {
+    return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+  }
+  return 0
 }
 
 interface ClientRow {
@@ -278,7 +314,8 @@ export function getMetricsSnapshot() {
         output_tokens as outputTokens,
         cache_read_tokens as cacheReadTokens,
         cache_creation_tokens as cacheCreationTokens,
-        cost_usd as costUsd
+        cost_usd as costUsd,
+        user_message as userMessage
        FROM request_metrics
        ORDER BY ts DESC
        LIMIT ?`,

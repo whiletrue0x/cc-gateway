@@ -2,13 +2,22 @@ import { readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 import { randomBytes } from 'crypto'
 import { parseDocument, YAMLSeq, YAMLMap } from 'yaml'
+import type { CostLimitPeriod } from './config.js'
 
 export interface ClientEntry {
   name: string
   token: string
+  cost_limit_usd?: number
+  cost_limit_period?: CostLimitPeriod
+}
+
+export interface ClientLimitInput {
+  cost_limit_usd?: number | null
+  cost_limit_period?: CostLimitPeriod | null
 }
 
 const NAME_RE = /^[a-zA-Z0-9_.-]{1,64}$/
+const VALID_PERIODS: CostLimitPeriod[] = ['lifetime', 'monthly', 'daily']
 
 function configPath(): string {
   return resolve(
@@ -34,23 +43,53 @@ function getTokensSeq(doc: ReturnType<typeof parseDocument>): YAMLSeq {
   return tokens
 }
 
+function readEntry(item: YAMLMap): ClientEntry | null {
+  const name = item.get('name')
+  const token = item.get('token')
+  if (typeof name !== 'string' || typeof token !== 'string') return null
+  const limitRaw = item.get('cost_limit_usd')
+  const periodRaw = item.get('cost_limit_period')
+  const cost_limit_usd = typeof limitRaw === 'number' && limitRaw > 0 ? limitRaw : undefined
+  const cost_limit_period =
+    typeof periodRaw === 'string' && (VALID_PERIODS as string[]).includes(periodRaw)
+      ? (periodRaw as CostLimitPeriod)
+      : undefined
+  return { name, token, cost_limit_usd, cost_limit_period }
+}
+
+function applyLimitToYamlEntry(entry: YAMLMap, input: ClientLimitInput): void {
+  if (input.cost_limit_usd === null || input.cost_limit_usd === 0) {
+    entry.delete('cost_limit_usd')
+    entry.delete('cost_limit_period')
+    return
+  }
+  if (typeof input.cost_limit_usd === 'number' && input.cost_limit_usd > 0) {
+    entry.set('cost_limit_usd', input.cost_limit_usd)
+    const period =
+      typeof input.cost_limit_period === 'string' &&
+      (VALID_PERIODS as string[]).includes(input.cost_limit_period)
+        ? input.cost_limit_period
+        : 'lifetime'
+    entry.set('cost_limit_period', period)
+  } else if (input.cost_limit_period !== undefined && input.cost_limit_period !== null) {
+    // period without limit: ignore
+  }
+}
+
 export function listClients(): ClientEntry[] {
   const doc = loadDoc(configPath())
   const tokens = getTokensSeq(doc)
   const out: ClientEntry[] = []
   for (const item of tokens.items) {
     if (item instanceof YAMLMap) {
-      const name = item.get('name')
-      const token = item.get('token')
-      if (typeof name === 'string' && typeof token === 'string') {
-        out.push({ name, token })
-      }
+      const e = readEntry(item)
+      if (e) out.push(e)
     }
   }
   return out
 }
 
-export function addClient(name: string): ClientEntry {
+export function addClient(name: string, limit?: ClientLimitInput): ClientEntry {
   if (!NAME_RE.test(name)) {
     throw new Error('client name must be 1-64 chars, [a-zA-Z0-9_.-]')
   }
@@ -68,10 +107,31 @@ export function addClient(name: string): ClientEntry {
   const entry = new YAMLMap()
   entry.set('name', name)
   entry.set('token', token)
+  if (limit) applyLimitToYamlEntry(entry, limit)
   tokens.add(entry)
 
   writeFileSync(path, doc.toString(), 'utf-8')
-  return { name, token }
+  const result = readEntry(entry)
+  return result || { name, token }
+}
+
+export function setClientLimit(name: string, limit: ClientLimitInput): ClientEntry {
+  const path = configPath()
+  const doc = loadDoc(path)
+  const tokens = getTokensSeq(doc)
+  let target: YAMLMap | null = null
+  for (const item of tokens.items) {
+    if (item instanceof YAMLMap && item.get('name') === name) {
+      target = item
+      break
+    }
+  }
+  if (!target) throw new Error(`client "${name}" not found`)
+  applyLimitToYamlEntry(target, limit)
+  writeFileSync(path, doc.toString(), 'utf-8')
+  const result = readEntry(target)
+  if (!result) throw new Error('failed to read updated entry')
+  return result
 }
 
 export function removeClient(name: string): boolean {

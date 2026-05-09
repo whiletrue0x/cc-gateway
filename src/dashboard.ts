@@ -142,6 +142,16 @@ export function renderDashboard(): string {
   .bar:hover { opacity: 1; }
   .ago { color: var(--muted); }
   .path { color: var(--fg); opacity: .9; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg { color: var(--fg); opacity: .85; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .msg.empty { color: var(--muted); font-style: italic; }
+  .limit-bar {
+    display: inline-block; width: 70px; height: 5px;
+    background: var(--panel-2); border-radius: 3px; overflow: hidden;
+    vertical-align: middle; margin-left: 6px;
+  }
+  .limit-bar > span { display: block; height: 100%; background: var(--ok); }
+  .limit-bar > span.warn { background: var(--warn); }
+  .limit-bar > span.err { background: var(--err); }
   .toolbar { display: flex; align-items: center; gap: 12px; }
   select, button {
     background: var(--panel-2); color: var(--fg);
@@ -266,6 +276,14 @@ export function renderDashboard(): string {
         <option value="https">https</option>
         <option value="http">http</option>
       </select>
+      <label>Cost limit (USD) — optional, 0 = unlimited</label>
+      <input id="cLimit" type="number" min="0" step="0.01" placeholder="0" autocomplete="off" />
+      <label>Limit window</label>
+      <select id="cLimitPeriod">
+        <option value="lifetime">Lifetime</option>
+        <option value="monthly">Monthly (UTC)</option>
+        <option value="daily">Daily (UTC)</option>
+      </select>
       <div id="cError" class="error" style="display:none;margin-top:12px"></div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
         <button id="cCancel" type="button">Cancel</button>
@@ -299,10 +317,33 @@ export function renderDashboard(): string {
     </div>
   </div>
 </div>
+
+<div id="limitModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <h3>Set cost limit · <span id="limitName"></span></h3>
+    <p class="meta" style="margin:0 0 16px">Block this client from <code>/v1/messages</code> when the window's cost reaches the limit. Other endpoints (free) keep working.</p>
+    <label>Cost limit (USD) — 0 / empty = unlimited</label>
+    <input id="lLimit" type="number" min="0" step="0.01" placeholder="0" autocomplete="off" />
+    <label>Window</label>
+    <select id="lPeriod">
+      <option value="lifetime">Lifetime</option>
+      <option value="monthly">Monthly (UTC)</option>
+      <option value="daily">Daily (UTC)</option>
+    </select>
+    <div id="lError" class="error" style="display:none;margin-top:12px"></div>
+    <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+      <button id="lCancel" type="button">Cancel</button>
+      <button id="lSubmit" type="button" class="primary">Save</button>
+    </div>
+  </div>
+</div>
 <script>
 (() => {
   const range = () => document.getElementById('rangeSel').value;
 
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const fmtNum = (n) => (n || 0).toLocaleString();
   const fmtTokens = (n) => {
     n = n || 0;
@@ -507,10 +548,15 @@ export function renderDashboard(): string {
     const rows = ordered.map(r => {
       const cls = r.status >= 500 ? 'err' : r.status >= 400 ? 'warn' : 'ok';
       const hasUsage = (r.inputTokens || r.outputTokens || r.cacheReadTokens || r.cacheCreationTokens);
+      const msg = r.userMessage || '';
+      const msgCell = msg
+        ? \`<td class="msg" title="\${esc(msg)}">\${esc(msg)}</td>\`
+        : '<td class="msg empty">—</td>';
       return \`<tr>
         <td class="ago">\${fmtAgo(r.ts)}</td>
         <td>\${r.client}</td>
         <td><span class="meta">\${shortModel(r.model)}</span></td>
+        \${msgCell}
         <td class="path" title="\${r.method} \${r.path}">\${r.path}</td>
         <td><span class="pill \${cls}">\${r.status}</span></td>
         <td class="num">\${r.durationMs}ms</td>
@@ -534,6 +580,7 @@ export function renderDashboard(): string {
             <th>When</th>
             <th>Client</th>
             <th>Model</th>
+            <th>Message</th>
             <th>Path</th>
             <th>Status</th>
             <th class="num">Duration</th>
@@ -584,6 +631,18 @@ export function renderDashboard(): string {
   });
 
   // ── Clients management ──
+  const renderLimitCell = (c) => {
+    if (!c.cost_limit_usd) {
+      return '<span class="meta">unlimited</span>';
+    }
+    const used = c.cost_used_usd || 0;
+    const pct = Math.min(100, Math.round((used / c.cost_limit_usd) * 100));
+    const cls = pct >= 100 ? 'err' : pct >= 80 ? 'warn' : '';
+    const period = c.cost_limit_period || 'lifetime';
+    return \`<span title="\${esc(period)} window">\${fmtCost(used)} / \${fmtCost(c.cost_limit_usd)} (\${pct}%)</span>\` +
+      \`<span class="limit-bar"><span class="\${cls}" style="width:\${pct}%"></span></span>\`;
+  };
+
   const renderClientsConfig = (clients) => {
     const el = document.getElementById('clientsConfig');
     if (!clients.length) {
@@ -592,15 +651,19 @@ export function renderDashboard(): string {
     }
     const rows = clients.map(c => \`
       <tr>
-        <td><strong>\${c.name}</strong></td>
-        <td><code class="config-info">\${c.token_preview}</code></td>
-        <td style="text-align:right">
-          <button class="danger" data-del-client="\${c.name}">Delete</button>
+        <td><strong>\${esc(c.name)}</strong></td>
+        <td><code class="config-info">\${esc(c.token_preview)}</code></td>
+        <td>\${renderLimitCell(c)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button data-edit-limit="\${esc(c.name)}"
+                  data-limit="\${c.cost_limit_usd || ''}"
+                  data-period="\${esc(c.cost_limit_period || 'lifetime')}">Set limit</button>
+          <button class="danger" data-del-client="\${esc(c.name)}">Delete</button>
         </td>
       </tr>\`).join('');
     el.innerHTML = \`
       <table>
-        <thead><tr><th>Configured client</th><th>Token</th><th></th></tr></thead>
+        <thead><tr><th>Configured client</th><th>Token</th><th>Cost limit</th><th></th></tr></thead>
         <tbody>\${rows}</tbody>
       </table>\`;
     el.querySelectorAll('[data-del-client]').forEach(btn => {
@@ -616,6 +679,15 @@ export function renderDashboard(): string {
           return;
         }
         loadClients();
+      });
+    });
+    el.querySelectorAll('[data-edit-limit]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        openLimitModal(
+          btn.getAttribute('data-edit-limit'),
+          btn.getAttribute('data-limit'),
+          btn.getAttribute('data-period') || 'lifetime',
+        );
       });
     });
   };
@@ -637,6 +709,8 @@ export function renderDashboard(): string {
     document.getElementById('cName').value = '';
     document.getElementById('cAddr').value = location.host;
     document.getElementById('cScheme').value = location.protocol === 'http:' ? 'http' : 'https';
+    document.getElementById('cLimit').value = '';
+    document.getElementById('cLimitPeriod').value = 'lifetime';
     showError(null);
     document.getElementById('modalForm').style.display = 'block';
     document.getElementById('modalSuccess').style.display = 'none';
@@ -686,7 +760,13 @@ export function renderDashboard(): string {
     const name = document.getElementById('cName').value.trim();
     const gateway_addr = document.getElementById('cAddr').value.trim();
     const scheme = document.getElementById('cScheme').value;
+    const limitRaw = document.getElementById('cLimit').value.trim();
+    const cost_limit_usd = limitRaw === '' ? null : Number(limitRaw);
+    const cost_limit_period = document.getElementById('cLimitPeriod').value;
     if (!name) { showError('Name is required'); return; }
+    if (cost_limit_usd !== null && (!Number.isFinite(cost_limit_usd) || cost_limit_usd < 0)) {
+      showError('Cost limit must be a non-negative number'); return;
+    }
     const submitBtn = document.getElementById('cSubmit');
     submitBtn.disabled = true;
     try {
@@ -694,7 +774,7 @@ export function renderDashboard(): string {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, gateway_addr, scheme }),
+        body: JSON.stringify({ name, gateway_addr, scheme, cost_limit_usd, cost_limit_period }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -716,6 +796,56 @@ export function renderDashboard(): string {
       submitBtn.disabled = false;
     }
   };
+
+  // ── Set-limit modal ──
+  const showLimitError = (msg) => {
+    const el = document.getElementById('lError');
+    if (msg) { el.textContent = msg; el.style.display = 'block'; }
+    else { el.style.display = 'none'; }
+  };
+  const openLimitModal = (name, currentLimit, currentPeriod) => {
+    document.getElementById('limitName').textContent = name;
+    document.getElementById('lLimit').value = currentLimit && Number(currentLimit) > 0 ? currentLimit : '';
+    document.getElementById('lPeriod').value = currentPeriod || 'lifetime';
+    showLimitError(null);
+    document.getElementById('limitModal').style.display = 'flex';
+    document.getElementById('limitModal').setAttribute('data-name', name);
+    setTimeout(() => document.getElementById('lLimit').focus(), 0);
+  };
+  const closeLimitModal = () => { document.getElementById('limitModal').style.display = 'none'; };
+  const submitLimit = async () => {
+    const name = document.getElementById('limitModal').getAttribute('data-name');
+    const raw = document.getElementById('lLimit').value.trim();
+    const cost_limit_usd = raw === '' ? null : Number(raw);
+    const cost_limit_period = document.getElementById('lPeriod').value;
+    if (cost_limit_usd !== null && (!Number.isFinite(cost_limit_usd) || cost_limit_usd < 0)) {
+      showLimitError('Cost limit must be a non-negative number'); return;
+    }
+    const btn = document.getElementById('lSubmit');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/clients/' + encodeURIComponent(name), {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cost_limit_usd, cost_limit_period }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showLimitError(err.error || 'Request failed: ' + res.status);
+        return;
+      }
+      closeLimitModal();
+      loadClients();
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  document.getElementById('lCancel').addEventListener('click', closeLimitModal);
+  document.getElementById('lSubmit').addEventListener('click', submitLimit);
+  document.getElementById('limitModal').addEventListener('click', (e) => {
+    if (e.target.id === 'limitModal') closeLimitModal();
+  });
 
   document.getElementById('addClientBtn').addEventListener('click', openModal);
   document.getElementById('cCancel').addEventListener('click', closeModal);

@@ -60,6 +60,7 @@ function migrate(db: Database.Database) {
   if (!has('cache_read_tokens')) addCol('cache_read_tokens INTEGER NOT NULL DEFAULT 0')
   if (!has('cache_creation_tokens')) addCol('cache_creation_tokens INTEGER NOT NULL DEFAULT 0')
   if (!has('cost_usd')) addCol('cost_usd REAL NOT NULL DEFAULT 0')
+  if (!has('user_message')) addCol("user_message TEXT NOT NULL DEFAULT ''")
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_rm_model_ts ON request_metrics(model, ts)')
 }
