@@ -198,8 +198,11 @@ export function updateConfigOAuth(
  * already in config.yaml, copy it across before the gateway boots. This handles
  * the case where the host re-logged in to Claude and rotated the refresh token.
  *
- * Only syncs when the credentials file is plausibly newer (different token).
- * No-op if no credentials file is mounted, or tokens already match.
+ * Only syncs when the mounted credentials are actually newer than config.yaml.
+ * The gateway rotates refresh_tokens at runtime and persists them back to
+ * config.yaml, so a mounted credentials.json from a past `claude login` will
+ * usually be STALE relative to config.yaml — overwriting blindly would replay
+ * a consumed refresh_token and brick auth on every restart.
  */
 export function syncOAuthFromCredentialsIfChanged(configPath: string): void {
   const absPath = resolve(configPath)
@@ -209,22 +212,37 @@ export function syncOAuthFromCredentialsIfChanged(configPath: string): void {
   if (!creds || !creds.refreshToken) return
 
   let currentRefresh: string | undefined
+  let currentExpiresAt = 0
   try {
     const raw = readFileSync(absPath, 'utf-8')
     const doc = parseDocument(raw)
     const oauth = doc.getIn(['oauth'], true) as YAMLMap | undefined
     const rt = oauth?.get('refresh_token')
     if (typeof rt === 'string') currentRefresh = rt
+    const exp = oauth?.get('expires_at')
+    if (typeof exp === 'number') currentExpiresAt = exp
   } catch {
     return
   }
 
   if (currentRefresh && currentRefresh === creds.refreshToken) return
 
-  log('info', 'Mounted credentials have a different refresh_token — syncing into config.yaml')
+  // Tokens differ. Only adopt the mounted creds when they're plausibly newer
+  // than what the gateway has already rotated to. expiresAt is monotonic per
+  // login, so a higher value means the mounted file is fresher.
+  const credsExpiresAt = creds.expiresAt || 0
+  if (currentRefresh && credsExpiresAt <= currentExpiresAt) {
+    log(
+      'info',
+      `Ignoring mounted credentials: expires_at=${credsExpiresAt} is not newer than config.yaml expires_at=${currentExpiresAt} (credentials.json is stale; gateway has rotated past it)`,
+    )
+    return
+  }
+
+  log('info', 'Mounted credentials are newer than config.yaml — syncing refresh_token')
   updateConfigOAuth(absPath, {
     accessToken: creds.accessToken || '',
     refreshToken: creds.refreshToken,
-    expiresAt: creds.expiresAt || 0,
+    expiresAt: credsExpiresAt,
   })
 }
