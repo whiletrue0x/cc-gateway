@@ -163,24 +163,119 @@ export function renderDashboard(): string {
     header { position: static; }
   }
 
-  /* Phone: tighten everything and let tables scroll horizontally. */
+  /* Phone: rework the layout to feel mobile-native instead of a shrunk PC.
+     - Header stacks; toolbar wraps onto its own row with full-width touch targets
+     - Stat tiles sit in a 2-column grid
+     - Wide data tables turn into stacked cards via [data-label] pseudo-labels,
+       so each row reads top-to-bottom without horizontal scroll */
   @media (max-width: 600px) {
     body { font-size: 13px; }
-    header { padding: 10px 14px; }
+    header {
+      flex-direction: column; align-items: stretch;
+      padding: 10px 14px; gap: 10px;
+    }
     header h1 { font-size: 14px; }
+    .toolbar { flex-wrap: wrap; gap: 8px; }
+    .toolbar #updated { flex-basis: 100%; order: -1; font-size: 11px; }
+    .toolbar select, .toolbar button { flex: 1 1 0; min-width: 0; font-size: 13px; padding: 8px 10px; }
+    .toolbar form { display: contents; }
+
     main { padding: 12px 14px; }
     .grid { gap: 12px; }
-    .card { padding: 12px; }
-    .card h2 { margin-bottom: 10px; font-size: 11px; }
-    .stat .value { font-size: 20px; }
-    .row { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
-    table { font-size: 12px; }
-    th, td { padding: 6px 8px; }
-    .msg { max-width: 180px; }
-    .path { max-width: 200px; }
-    .scroll-y { max-height: 360px; }
-    .toolbar { gap: 6px; }
-    select, button { padding: 5px 8px; font-size: 12px; }
+    .card { padding: 14px; }
+    .card h2 {
+      margin-bottom: 10px; font-size: 11px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .card h2 button { float: none !important; margin: 0 !important; }
+
+    /* Compact 2-up stat tiles */
+    .row { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .card.stat { padding: 10px 12px; }
+    .stat .value { font-size: 18px; }
+    .stat .label { font-size: 10px; }
+
+    /* iOS won't auto-zoom inputs at >= 16px */
+    .modal-box input, .modal-box select { font-size: 16px; }
+
+    /* Turn wide data tables into stacked cards.
+       Each <tr> renders as a small card; each <td data-label="..."> shows
+       its column name as a left-aligned pseudo-label. */
+    #periodTable, #modelsTable, #clientsTable, #clientsConfig, .scroll-y { overflow-x: visible; }
+    .scroll-y { max-height: 70vh; }
+    #periodTable table, #modelsTable table, #clientsTable table,
+    #clientsConfig table, .scroll-y table { min-width: 0; font-size: 13px; }
+
+    #periodTable table, #modelsTable table, #clientsTable table,
+    #clientsConfig table, .scroll-y table,
+    #periodTable tbody, #modelsTable tbody, #clientsTable tbody,
+    #clientsConfig tbody, .scroll-y tbody,
+    #periodTable tr, #modelsTable tr, #clientsTable tr,
+    #clientsConfig tr, .scroll-y tr,
+    #periodTable td, #modelsTable td, #clientsTable td,
+    #clientsConfig td, .scroll-y td { display: block; width: auto; }
+
+    #periodTable thead, #modelsTable thead, #clientsTable thead,
+    #clientsConfig thead, .scroll-y thead { display: none; }
+
+    #periodTable tr, #modelsTable tr, #clientsTable tr,
+    #clientsConfig tr, .scroll-y tr {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+    }
+    #periodTable tr:last-child, #modelsTable tr:last-child,
+    #clientsTable tr:last-child, #clientsConfig tr:last-child,
+    .scroll-y tr:last-child { margin-bottom: 0; }
+
+    #periodTable td, #modelsTable td, #clientsTable td,
+    #clientsConfig td, .scroll-y td {
+      border: 0; padding: 4px 0;
+      max-width: none !important; white-space: normal;
+      display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+      text-align: left;
+    }
+    #periodTable td.num, #modelsTable td.num, #clientsTable td.num,
+    #clientsConfig td.num, .scroll-y td.num { text-align: right; }
+
+    #periodTable td[data-label]::before, #modelsTable td[data-label]::before,
+    #clientsTable td[data-label]::before, #clientsConfig td[data-label]::before,
+    .scroll-y td[data-label]::before {
+      content: attr(data-label);
+      color: var(--muted); font-size: 11px;
+      text-transform: uppercase; letter-spacing: .04em;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      flex-shrink: 0;
+    }
+    #periodTable td[data-label=""]::before, #modelsTable td[data-label=""]::before,
+    #clientsTable td[data-label=""]::before, #clientsConfig td[data-label=""]::before,
+    .scroll-y td[data-label=""]::before { content: none; }
+
+    /* Empty-label cells render as full-width blocks (no two-column flex) so
+       things like the row title and action-button rows lay out naturally. */
+    #periodTable td[data-label=""], #modelsTable td[data-label=""],
+    #clientsTable td[data-label=""], #clientsConfig td[data-label=""],
+    .scroll-y td[data-label=""] { display: block; }
+
+    /* First cell becomes the card title */
+    #periodTable tr td:first-child, #modelsTable tr td:first-child,
+    #clientsTable tr td:first-child, #clientsConfig tr td:first-child,
+    .scroll-y tr td:first-child {
+      padding: 0 0 8px; margin-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px; font-family: var(--mono);
+    }
+
+    /* Action buttons in clientsConfig: wrap and size for touch */
+    #clientsConfig td[data-label=""]:last-child {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      padding-top: 8px; margin-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+    #clientsConfig td button { padding: 8px 12px; font-size: 13px; flex: 1 1 0; min-width: 0; }
+
+    /* Recent message/path get full row width — no more truncation needed */
+    .msg, .path { max-width: none; white-space: normal; word-break: break-word; }
+
     .modal-box {
       width: 100%; max-width: 100vw; height: 100vh; max-height: 100vh;
       border-radius: 0; border: 0; padding: 18px;
@@ -340,7 +435,7 @@ export function renderDashboard(): string {
       <option value="hour">Last 24 h</option>
     </select>
     <button id="refreshBtn">Refresh</button>
-    <form action="/logout" method="post" style="display:inline">
+    <form action="/logout" method="post">
       <button type="submit">Logout</button>
     </form>
   </div>
@@ -553,12 +648,12 @@ export function renderDashboard(): string {
       costUsd: t.costUsd,
     }]);
     const rows = periods.map(p => \`<tr>
-      <td><strong>\${p.label}</strong></td>
-      <td class="num">\${fmtNum(p.total)}</td>
-      <td class="num" title="\${fmtNum(p.inputTokens)} tokens">\${fmtTokens(p.inputTokens)}</td>
-      <td class="num" title="\${fmtNum(p.outputTokens)} tokens">\${fmtTokens(p.outputTokens)}</td>
-      <td class="num" title="cache read \${fmtNum(p.cacheReadTokens)} · cache write \${fmtNum(p.cacheCreationTokens)}">\${fmtTokens((p.cacheReadTokens || 0) + (p.cacheCreationTokens || 0))}</td>
-      <td class="num"><strong>\${fmtCost(p.costUsd)}</strong></td>
+      <td data-label=""><strong>\${p.label}</strong></td>
+      <td class="num" data-label="Calls">\${fmtNum(p.total)}</td>
+      <td class="num" data-label="Input" title="\${fmtNum(p.inputTokens)} tokens">\${fmtTokens(p.inputTokens)}</td>
+      <td class="num" data-label="Output" title="\${fmtNum(p.outputTokens)} tokens">\${fmtTokens(p.outputTokens)}</td>
+      <td class="num" data-label="Cache" title="cache read \${fmtNum(p.cacheReadTokens)} · cache write \${fmtNum(p.cacheCreationTokens)}">\${fmtTokens((p.cacheReadTokens || 0) + (p.cacheCreationTokens || 0))}</td>
+      <td class="num" data-label="Cost"><strong>\${fmtCost(p.costUsd)}</strong></td>
     </tr>\`).join('');
     document.getElementById('periodTable').innerHTML = \`
       <table>
@@ -580,18 +675,15 @@ export function renderDashboard(): string {
       el.innerHTML = '<div class="empty">No model usage recorded yet</div>';
       return;
     }
-    const rows = data.models.map(m => {
-      const totalTokens = (m.inputTokens || 0) + (m.outputTokens || 0);
-      return \`<tr>
-        <td><strong>\${shortModel(m.model)}</strong></td>
-        <td class="num">\${fmtNum(m.total)}</td>
-        <td class="num">\${fmtTokens(m.inputTokens)}</td>
-        <td class="num">\${fmtTokens(m.outputTokens)}</td>
-        <td class="num">\${fmtTokens(m.cacheReadTokens)}</td>
-        <td class="num">\${fmtTokens(m.cacheCreationTokens)}</td>
-        <td class="num"><strong>\${fmtCost(m.costUsd)}</strong></td>
-      </tr>\`;
-    }).join('');
+    const rows = data.models.map(m => \`<tr>
+      <td data-label=""><strong>\${shortModel(m.model)}</strong></td>
+      <td class="num" data-label="Calls">\${fmtNum(m.total)}</td>
+      <td class="num" data-label="Input">\${fmtTokens(m.inputTokens)}</td>
+      <td class="num" data-label="Output">\${fmtTokens(m.outputTokens)}</td>
+      <td class="num" data-label="Cache read">\${fmtTokens(m.cacheReadTokens)}</td>
+      <td class="num" data-label="Cache write">\${fmtTokens(m.cacheCreationTokens)}</td>
+      <td class="num" data-label="Cost"><strong>\${fmtCost(m.costUsd)}</strong></td>
+    </tr>\`).join('');
     el.innerHTML = \`
       <table>
         <thead><tr>
@@ -642,15 +734,15 @@ export function renderDashboard(): string {
     const rows = data.clients.map(c => {
       const s = statusClass(c.byStatus);
       return \`<tr>
-        <td><strong>\${c.name}</strong></td>
-        <td class="num">\${fmtNum(c.total)}</td>
-        <td class="num" title="\${fmtNum(c.inputTokens)} tokens">\${fmtTokens(c.inputTokens)}</td>
-        <td class="num" title="\${fmtNum(c.outputTokens)} tokens">\${fmtTokens(c.outputTokens)}</td>
-        <td class="num" title="cache read \${fmtNum(c.cacheReadTokens)} · cache write \${fmtNum(c.cacheCreationTokens)}">\${fmtTokens((c.cacheReadTokens || 0) + (c.cacheCreationTokens || 0))}</td>
-        <td class="num"><strong>\${fmtCost(c.costUsd)}</strong></td>
-        <td><span class="pill ok">\${s.ok}</span> <span class="pill warn">\${s.warn}</span> <span class="pill err">\${s.err}</span></td>
-        <td class="num">\${c.avgDurationMs}ms</td>
-        <td class="ago">\${fmtAgo(c.lastSeen)}</td>
+        <td data-label=""><strong>\${c.name}</strong></td>
+        <td class="num" data-label="Calls">\${fmtNum(c.total)}</td>
+        <td class="num" data-label="Input" title="\${fmtNum(c.inputTokens)} tokens">\${fmtTokens(c.inputTokens)}</td>
+        <td class="num" data-label="Output" title="\${fmtNum(c.outputTokens)} tokens">\${fmtTokens(c.outputTokens)}</td>
+        <td class="num" data-label="Cache" title="cache read \${fmtNum(c.cacheReadTokens)} · cache write \${fmtNum(c.cacheCreationTokens)}">\${fmtTokens((c.cacheReadTokens || 0) + (c.cacheCreationTokens || 0))}</td>
+        <td class="num" data-label="Cost"><strong>\${fmtCost(c.costUsd)}</strong></td>
+        <td data-label="2xx / 4xx / 5xx"><span class="pill ok">\${s.ok}</span> <span class="pill warn">\${s.warn}</span> <span class="pill err">\${s.err}</span></td>
+        <td class="num" data-label="Avg">\${c.avgDurationMs}ms</td>
+        <td class="ago" data-label="Last seen">\${fmtAgo(c.lastSeen)}</td>
       </tr>\`;
     }).join('');
     document.getElementById('clientsTable').innerHTML = \`
@@ -695,22 +787,22 @@ export function renderDashboard(): string {
     const hasUsage = (r.inputTokens || r.outputTokens || r.cacheReadTokens || r.cacheCreationTokens);
     const msg = r.userMessage || '';
     const msgCell = msg
-      ? \`<td class="msg" title="\${esc(msg)}">\${esc(msg)}</td>\`
-      : '<td class="msg empty">—</td>';
+      ? \`<td class="msg" data-label="Message" title="\${esc(msg)}">\${esc(msg)}</td>\`
+      : '<td class="msg empty" data-label="Message">—</td>';
     const tr = document.createElement('tr');
     tr.dataset.ts = String(r.ts);
     tr.innerHTML = \`
-      <td class="ago" data-ts="\${r.ts}">\${fmtAgo(r.ts)}</td>
-      <td>\${esc(r.client)}</td>
-      <td><span class="meta">\${esc(shortModel(r.model))}</span></td>
+      <td class="ago" data-ts="\${r.ts}" data-label="">\${fmtAgo(r.ts)}</td>
+      <td data-label="Client">\${esc(r.client)}</td>
+      <td data-label="Model"><span class="meta">\${esc(shortModel(r.model))}</span></td>
       \${msgCell}
-      <td class="path" title="\${esc(r.method + ' ' + r.path)}">\${esc(r.path)}</td>
-      <td><span class="pill \${cls}">\${r.status}</span></td>
-      <td class="num">\${r.durationMs}ms</td>
-      <td class="num" title="\${fmtNum(r.inputTokens)} input tokens">\${hasUsage ? fmtTokens(r.inputTokens) : '—'}</td>
-      <td class="num" title="\${fmtNum(r.outputTokens)} output tokens">\${hasUsage ? fmtTokens(r.outputTokens) : '—'}</td>
-      <td class="num" title="cache read \${fmtNum(r.cacheReadTokens)} · cache write \${fmtNum(r.cacheCreationTokens)}">\${hasUsage ? fmtTokens((r.cacheReadTokens || 0) + (r.cacheCreationTokens || 0)) : '—'}</td>
-      <td class="num">\${r.costUsd ? fmtCost(r.costUsd) : '—'}</td>\`;
+      <td class="path" data-label="Path" title="\${esc(r.method + ' ' + r.path)}">\${esc(r.path)}</td>
+      <td data-label="Status"><span class="pill \${cls}">\${r.status}</span></td>
+      <td class="num" data-label="Duration">\${r.durationMs}ms</td>
+      <td class="num" data-label="Input" title="\${fmtNum(r.inputTokens)} input tokens">\${hasUsage ? fmtTokens(r.inputTokens) : '—'}</td>
+      <td class="num" data-label="Output" title="\${fmtNum(r.outputTokens)} output tokens">\${hasUsage ? fmtTokens(r.outputTokens) : '—'}</td>
+      <td class="num" data-label="Cache" title="cache read \${fmtNum(r.cacheReadTokens)} · cache write \${fmtNum(r.cacheCreationTokens)}">\${hasUsage ? fmtTokens((r.cacheReadTokens || 0) + (r.cacheCreationTokens || 0)) : '—'}</td>
+      <td class="num" data-label="Cost">\${r.costUsd ? fmtCost(r.costUsd) : '—'}</td>\`;
     return tr;
   };
 
@@ -872,10 +964,10 @@ export function renderDashboard(): string {
     }
     const rows = clients.map(c => \`
       <tr>
-        <td><strong>\${esc(c.name)}</strong></td>
-        <td><code class="config-info">\${esc(c.token_preview)}</code></td>
-        <td>\${renderLimitCell(c)}</td>
-        <td style="text-align:right;white-space:nowrap">
+        <td data-label=""><strong>\${esc(c.name)}</strong></td>
+        <td data-label="Token"><code class="config-info">\${esc(c.token_preview)}</code></td>
+        <td data-label="Cost limit">\${renderLimitCell(c)}</td>
+        <td data-label="" style="text-align:right;white-space:nowrap">
           <button data-edit-limit="\${esc(c.name)}"
                   data-limit="\${c.cost_limit_usd || ''}"
                   data-period="\${esc(c.cost_limit_period || 'lifetime')}">Set limit</button>
