@@ -250,7 +250,7 @@ export function renderDashboard(): string {
     <span class="sub">Request Dashboard</span>
   </div>
   <nav id="sideNav">
-    <a href="#stats" class="active"><span class="icon">▦</span>Overview</a>
+    <a href="#topStats" class="active"><span class="icon">▦</span>Overview</a>
     <a href="#periods"><span class="icon">$</span>Cost &amp; periods</a>
     <a href="#charts"><span class="icon">∿</span>Traffic</a>
     <a href="#models"><span class="icon">◇</span>By model</a>
@@ -1011,7 +1011,7 @@ export function renderDashboard(): string {
   // Sidebar nav: highlight the section currently in view and keep page title
   // in sync. Uses IntersectionObserver — much cheaper than scroll listeners.
   const sectionToTitle = {
-    'stats': 'Overview',
+    'topStats': 'Overview',
     'periods': 'Cost & periods',
     'charts-section': 'Traffic',
     'models': 'By model',
@@ -1029,10 +1029,7 @@ export function renderDashboard(): string {
     const title = document.getElementById('pageTitle');
     if (title && sectionToTitle[id]) title.textContent = sectionToTitle[id];
   };
-  // Tag #topStats as #stats for nav targeting.
-  const topStatsEl = document.getElementById('topStats');
-  if (topStatsEl) topStatsEl.id = 'stats';
-  const observed = ['stats', 'periods', 'charts-section', 'models', 'clients', 'recent', 'about']
+  const observed = ['topStats', 'periods', 'charts-section', 'models', 'clients', 'recent', 'about']
     .map(id => document.getElementById(id))
     .filter(Boolean);
   if ('IntersectionObserver' in window) {
