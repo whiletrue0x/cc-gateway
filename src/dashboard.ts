@@ -89,15 +89,58 @@ export function renderDashboard(): string {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg); color: var(--fg);
     font-size: 14px;
+    display: flex; min-height: 100vh;
   }
+  aside.sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    position: sticky; top: 0; height: 100vh;
+  }
+  aside.sidebar .brand {
+    padding: 18px 20px; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 14px;
+  }
+  aside.sidebar .brand .sub {
+    display: block; color: var(--muted); font-size: 11px;
+    font-weight: 400; margin-top: 2px; letter-spacing: .02em;
+  }
+  aside.sidebar nav {
+    flex: 1; overflow-y: auto; padding: 12px 8px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  aside.sidebar nav a {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 6px;
+    color: var(--fg); text-decoration: none; font-size: 13px;
+    opacity: .8;
+  }
+  aside.sidebar nav a:hover { background: var(--panel-2); opacity: 1; }
+  aside.sidebar nav a.active { background: var(--panel-2); opacity: 1; color: var(--accent); }
+  aside.sidebar nav a .icon { font-family: var(--mono); width: 16px; text-align: center; opacity: .7; }
+  aside.sidebar .sidebar-footer {
+    padding: 12px 16px; border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--muted); display: flex;
+    flex-direction: column; gap: 8px;
+  }
+  aside.sidebar .sidebar-footer form { display: block; }
+  aside.sidebar .sidebar-footer form button { width: 100%; }
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   header {
     padding: 14px 24px; border-bottom: 1px solid var(--border);
     display: flex; align-items: center; justify-content: space-between;
-    background: var(--panel);
+    background: var(--panel); position: sticky; top: 0; z-index: 10;
   }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
   header .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
-  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; width: 100%; }
+  @media (max-width: 800px) {
+    body { flex-direction: column; }
+    aside.sidebar { width: 100%; height: auto; position: static; }
+    aside.sidebar nav { flex-direction: row; flex-wrap: wrap; padding: 8px; }
+    aside.sidebar nav a { padding: 6px 10px; }
+    aside.sidebar .sidebar-footer { display: none; }
+  }
   .grid { display: grid; gap: 16px; }
   .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 12px; }
   .card {
@@ -201,28 +244,67 @@ export function renderDashboard(): string {
 </style>
 </head>
 <body>
-<header>
-  <h1>CC Gateway · Request Dashboard</h1>
-  <div class="toolbar">
+<aside class="sidebar">
+  <div class="brand">
+    CC Gateway
+    <span class="sub">Request Dashboard</span>
+  </div>
+  <nav id="sideNav">
+    <a href="#stats" class="active"><span class="icon">▦</span>Overview</a>
+    <a href="#periods"><span class="icon">$</span>Cost &amp; periods</a>
+    <a href="#charts"><span class="icon">∿</span>Traffic</a>
+    <a href="#models"><span class="icon">◇</span>By model</a>
+    <a href="#clients"><span class="icon">◎</span>Clients</a>
+    <a href="#recent"><span class="icon">»</span>Recent requests</a>
+    <a href="#about"><span class="icon">?</span>How to use</a>
+  </nav>
+  <div class="sidebar-footer">
     <span class="meta" id="updated">loading…</span>
+    <form action="/logout" method="post"><button type="submit">Logout</button></form>
+  </div>
+</aside>
+<div class="content">
+<header>
+  <h1 id="pageTitle">Overview</h1>
+  <div class="toolbar">
     <select id="rangeSel">
       <option value="minute">Last 60 min</option>
       <option value="hour">Last 24 h</option>
     </select>
     <button id="refreshBtn">Refresh</button>
-    <form action="/logout" method="post" style="display:inline">
-      <button type="submit">Logout</button>
-    </form>
   </div>
 </header>
 <main>
   <div class="grid">
     <div class="row" id="topStats"></div>
-    <div class="card">
+    <section id="periods" class="card">
       <h2>Cost &amp; usage by period</h2>
       <div id="periodTable"></div>
-    </div>
-    <details class="card" id="aboutCard">
+    </section>
+    <section id="charts-section" class="card">
+      <h2>Requests over time (per client)</h2>
+      <div id="charts" class="grid"></div>
+    </section>
+    <section id="models" class="card">
+      <h2>By model</h2>
+      <div id="modelsTable"></div>
+    </section>
+    <section id="clients" class="card">
+      <h2>
+        Clients
+        <button id="addClientBtn" style="float:right;margin-top:-4px">+ Add client</button>
+      </h2>
+      <div id="clientsConfig" style="margin-bottom:12px"></div>
+      <div id="clientsTable"></div>
+    </section>
+    <section id="recent" class="card">
+      <h2>
+        Recent requests
+        <span id="pauseHint" class="meta" style="float:right;font-weight:400;text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)"></span>
+      </h2>
+      <div id="recentTable"></div>
+    </section>
+    <details id="about" class="card">
       <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">
         How to use this dashboard
       </summary>
@@ -232,35 +314,16 @@ export function renderDashboard(): string {
         <p style="margin:0 0 10px"><strong>Requests over time</strong> — per-client traffic. Toggle <em>Last 60 min</em> / <em>Last 24 h</em>.</p>
         <p style="margin:0 0 10px"><strong>By model</strong> — per-model totals: calls, input/output/cache tokens, and cost. Cost uses Anthropic public list prices.</p>
         <p style="margin:0 0 10px"><strong>Clients</strong> — every entry under <code>auth.tokens</code>, with their lifetime calls / tokens / cost. Click <strong>+ Add client</strong> to generate a token, append it to <code>config.yaml</code>, and download a launcher script.</p>
-        <p style="margin:0 0 10px"><strong>Recent requests</strong> — last 50 requests with model, tokens, cost, and duration. Updates every 5 seconds.</p>
+        <p style="margin:0 0 10px"><strong>Recent requests</strong> — last 50 requests with model, tokens, cost, and duration. New rows stream in at the top; updates pause while you're hovering so the view doesn't jump.</p>
         <p style="margin:0">After downloading <code>cc-&lt;name&gt;</code>, send it to the user. They run:</p>
 <pre style="background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-family:var(--mono);font-size:12px;overflow-x:auto;margin:8px 0 0">chmod +x cc-&lt;name&gt;
 ./cc-&lt;name&gt; install      # install as 'ccg' system-wide (optional)
 ./cc-&lt;name&gt;              # or run directly without installing</pre>
       </div>
     </details>
-    <div class="card">
-      <h2>Requests over time (per client)</h2>
-      <div id="charts" class="grid"></div>
-    </div>
-    <div class="card">
-      <h2>By model</h2>
-      <div id="modelsTable"></div>
-    </div>
-    <div class="card">
-      <h2>
-        Clients
-        <button id="addClientBtn" style="float:right;margin-top:-4px">+ Add client</button>
-      </h2>
-      <div id="clientsConfig" style="margin-bottom:12px"></div>
-      <div id="clientsTable"></div>
-    </div>
-    <div class="card">
-      <h2>Recent requests</h2>
-      <div id="recentTable"></div>
-    </div>
   </div>
 </main>
+</div>
 
 <div id="addClientModal" class="modal" style="display:none">
   <div class="modal-box">
@@ -536,66 +599,153 @@ export function renderDashboard(): string {
       </table>\`;
   };
 
+  const RECENT_TABLE_HTML = \`
+    <div class="scroll-y" id="recentScroll">
+      <table>
+        <thead><tr>
+          <th>When</th>
+          <th>Client</th>
+          <th>Model</th>
+          <th>Message</th>
+          <th>Path</th>
+          <th>Status</th>
+          <th class="num">Duration</th>
+          <th class="num">Input</th>
+          <th class="num">Output</th>
+          <th class="num">Cache</th>
+          <th class="num">Cost</th>
+        </tr></thead>
+        <tbody id="recentBody"></tbody>
+      </table>
+    </div>\`;
+
+  const buildRecentRow = (r) => {
+    const cls = r.status >= 500 ? 'err' : r.status >= 400 ? 'warn' : 'ok';
+    const hasUsage = (r.inputTokens || r.outputTokens || r.cacheReadTokens || r.cacheCreationTokens);
+    const msg = r.userMessage || '';
+    const msgCell = msg
+      ? \`<td class="msg" title="\${esc(msg)}">\${esc(msg)}</td>\`
+      : '<td class="msg empty">—</td>';
+    const tr = document.createElement('tr');
+    tr.dataset.ts = String(r.ts);
+    tr.innerHTML = \`
+      <td class="ago" data-ts="\${r.ts}">\${fmtAgo(r.ts)}</td>
+      <td>\${esc(r.client)}</td>
+      <td><span class="meta">\${esc(shortModel(r.model))}</span></td>
+      \${msgCell}
+      <td class="path" title="\${esc(r.method + ' ' + r.path)}">\${esc(r.path)}</td>
+      <td><span class="pill \${cls}">\${r.status}</span></td>
+      <td class="num">\${r.durationMs}ms</td>
+      <td class="num" title="\${fmtNum(r.inputTokens)} input tokens">\${hasUsage ? fmtTokens(r.inputTokens) : '—'}</td>
+      <td class="num" title="\${fmtNum(r.outputTokens)} output tokens">\${hasUsage ? fmtTokens(r.outputTokens) : '—'}</td>
+      <td class="num" title="cache read \${fmtNum(r.cacheReadTokens)} · cache write \${fmtNum(r.cacheCreationTokens)}">\${hasUsage ? fmtTokens((r.cacheReadTokens || 0) + (r.cacheCreationTokens || 0)) : '—'}</td>
+      <td class="num">\${r.costUsd ? fmtCost(r.costUsd) : '—'}</td>\`;
+    return tr;
+  };
+
+  const RECENT_KEEP = 50;
+  let pendingRecent = [];        // queued rows while paused (deduped by ts)
+  let recentPaused = false;      // user is hovering the table
+
+  // Refresh just the relative-time cells without touching the rest of the row,
+  // so an idle viewer sees "1m ago" tick to "2m ago" without the whole table
+  // re-rendering and losing their scroll/selection.
+  const tickAgoCells = () => {
+    const body = document.getElementById('recentBody');
+    if (!body) return;
+    body.querySelectorAll('td.ago[data-ts]').forEach(td => {
+      const ts = Number(td.getAttribute('data-ts'));
+      if (Number.isFinite(ts)) td.textContent = fmtAgo(ts);
+    });
+  };
+
+  const flushPendingRecent = () => {
+    const body = document.getElementById('recentBody');
+    const scroll = document.getElementById('recentScroll');
+    if (!body || !pendingRecent.length) {
+      updatePauseHint();
+      return;
+    }
+    // Chat-style: newest at the bottom. Stick to bottom only if the user was
+    // already there; if they scrolled UP to inspect older rows, leave their
+    // viewport alone (appending at the bottom doesn't shift content above).
+    const wasAtBottom = !scroll
+      || (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight) < 32;
+    // Append oldest-first so the newest ends up at the bottom.
+    pendingRecent.sort((a, b) => a.ts - b.ts);
+    for (const r of pendingRecent) {
+      body.appendChild(buildRecentRow(r));
+    }
+    pendingRecent = [];
+    while (body.children.length > RECENT_KEEP) {
+      body.removeChild(body.firstChild);
+    }
+    if (scroll && wasAtBottom) {
+      scroll.scrollTop = scroll.scrollHeight;
+    }
+    updatePauseHint();
+  };
+
+  const updatePauseHint = () => {
+    const hint = document.getElementById('pauseHint');
+    if (!hint) return;
+    if (recentPaused && pendingRecent.length) {
+      hint.textContent = \`paused · \${pendingRecent.length} new (move cursor away to apply)\`;
+    } else if (recentPaused) {
+      hint.textContent = 'paused while hovering';
+    } else {
+      hint.textContent = '';
+    }
+  };
+
   const renderRecent = (data) => {
     const host = document.getElementById('recentTable');
     if (!data.recent.length) {
       host.innerHTML = '<div class="empty">No requests yet</div>';
+      pendingRecent = [];
       return;
     }
-    // Server returns newest-first; flip so newest sits at the bottom of the
-    // scrolling viewport (chat/log style).
-    const ordered = data.recent.slice().reverse();
-    const rows = ordered.map(r => {
-      const cls = r.status >= 500 ? 'err' : r.status >= 400 ? 'warn' : 'ok';
-      const hasUsage = (r.inputTokens || r.outputTokens || r.cacheReadTokens || r.cacheCreationTokens);
-      const msg = r.userMessage || '';
-      const msgCell = msg
-        ? \`<td class="msg" title="\${esc(msg)}">\${esc(msg)}</td>\`
-        : '<td class="msg empty">—</td>';
-      return \`<tr>
-        <td class="ago">\${fmtAgo(r.ts)}</td>
-        <td>\${r.client}</td>
-        <td><span class="meta">\${shortModel(r.model)}</span></td>
-        \${msgCell}
-        <td class="path" title="\${r.method} \${r.path}">\${r.path}</td>
-        <td><span class="pill \${cls}">\${r.status}</span></td>
-        <td class="num">\${r.durationMs}ms</td>
-        <td class="num" title="\${fmtNum(r.inputTokens)} input tokens">\${hasUsage ? fmtTokens(r.inputTokens) : '—'}</td>
-        <td class="num" title="\${fmtNum(r.outputTokens)} output tokens">\${hasUsage ? fmtTokens(r.outputTokens) : '—'}</td>
-        <td class="num" title="cache read \${fmtNum(r.cacheReadTokens)} · cache write \${fmtNum(r.cacheCreationTokens)}">\${hasUsage ? fmtTokens((r.cacheReadTokens || 0) + (r.cacheCreationTokens || 0)) : '—'}</td>
-        <td class="num">\${r.costUsd ? fmtCost(r.costUsd) : '—'}</td>
-      </tr>\`;
-    }).join('');
 
-    // Preserve the user's scroll intent: only auto-stick to the bottom if they
-    // were already near it (or this is the first render). If they scrolled up
-    // to inspect older requests, leave the scroll position alone.
-    const prev = host.querySelector('.scroll-y');
-    const wasNearBottom = !prev || (prev.scrollHeight - prev.scrollTop - prev.clientHeight) < 32;
+    let body = document.getElementById('recentBody');
+    if (!body) {
+      host.innerHTML = RECENT_TABLE_HTML;
+      body = document.getElementById('recentBody');
+      // Initial paint: server returns newest-first, but we want chat-style
+      // (newest at the bottom), so reverse before appending.
+      const ordered = data.recent.slice().reverse();
+      for (const r of ordered) body.appendChild(buildRecentRow(r));
 
-    host.innerHTML = \`
-      <div class="scroll-y">
-        <table>
-          <thead><tr>
-            <th>When</th>
-            <th>Client</th>
-            <th>Model</th>
-            <th>Message</th>
-            <th>Path</th>
-            <th>Status</th>
-            <th class="num">Duration</th>
-            <th class="num">Input</th>
-            <th class="num">Output</th>
-            <th class="num">Cache</th>
-            <th class="num">Cost</th>
-          </tr></thead>
-          <tbody>\${rows}</tbody>
-        </table>
-      </div>\`;
+      // Pause refresh while the user is interacting so the table stops moving
+      // under their cursor. Resume + flush when they leave.
+      const scroll = document.getElementById('recentScroll');
+      scroll.addEventListener('mouseenter', () => { recentPaused = true; updatePauseHint(); });
+      scroll.addEventListener('mouseleave', () => { recentPaused = false; flushPendingRecent(); });
+      // Start anchored at the bottom so the latest request is in view.
+      scroll.scrollTop = scroll.scrollHeight;
+      return;
+    }
 
-    if (wasNearBottom) {
-      const next = host.querySelector('.scroll-y');
-      if (next) next.scrollTop = next.scrollHeight;
+    // Diff against what's already in the DOM. ts is monotonic per-request and
+    // unique enough at our request rate to use as a row key.
+    const known = new Set(
+      Array.from(body.children).map(tr => tr.dataset.ts),
+    );
+    for (const r of pendingRecent) known.add(String(r.ts));
+    const fresh = data.recent.filter(r => !known.has(String(r.ts)));
+    if (!fresh.length) {
+      tickAgoCells();
+      updatePauseHint();
+      return;
+    }
+
+    pendingRecent.push(...fresh);
+    if (recentPaused) {
+      // Hold back — let the user finish reading. Hint shows the backlog.
+      tickAgoCells();
+      updatePauseHint();
+    } else {
+      flushPendingRecent();
+      tickAgoCells();
     }
   };
 
@@ -858,9 +1008,52 @@ export function renderDashboard(): string {
     if (e.target.id === 'addClientModal') closeModal();
   });
 
+  // Sidebar nav: highlight the section currently in view and keep page title
+  // in sync. Uses IntersectionObserver — much cheaper than scroll listeners.
+  const sectionToTitle = {
+    'stats': 'Overview',
+    'periods': 'Cost & periods',
+    'charts-section': 'Traffic',
+    'models': 'By model',
+    'clients': 'Clients',
+    'recent': 'Recent requests',
+    'about': 'How to use',
+  };
+  const navLinks = Array.from(document.querySelectorAll('#sideNav a'));
+  const setActive = (id) => {
+    for (const a of navLinks) {
+      const target = a.getAttribute('href').slice(1);
+      const matchTarget = target === 'charts' ? 'charts-section' : target;
+      a.classList.toggle('active', matchTarget === id);
+    }
+    const title = document.getElementById('pageTitle');
+    if (title && sectionToTitle[id]) title.textContent = sectionToTitle[id];
+  };
+  // Tag #topStats as #stats for nav targeting.
+  const topStatsEl = document.getElementById('topStats');
+  if (topStatsEl) topStatsEl.id = 'stats';
+  const observed = ['stats', 'periods', 'charts-section', 'models', 'clients', 'recent', 'about']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  if ('IntersectionObserver' in window) {
+    const visible = new Map();
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        visible.set(e.target.id, e.intersectionRatio);
+      }
+      let bestId = null, bestRatio = 0;
+      for (const [id, ratio] of visible) {
+        if (ratio > bestRatio) { bestRatio = ratio; bestId = id; }
+      }
+      if (bestId) setActive(bestId);
+    }, { rootMargin: '-80px 0px -50% 0px', threshold: [0, 0.1, 0.5, 1] });
+    for (const el of observed) io.observe(el);
+  }
+
   loadClients();
   refresh();
   setInterval(refresh, 5000);
+  setInterval(tickAgoCells, 15000);
 })();
 </script>
 </body>
