@@ -31,6 +31,15 @@ function reloadAuthFromConfig(): void {
   setAuthTokens(listClients())
 }
 
+// Claude Code wraps a lot of synthetic context (hook output, slash-command
+// metadata, reminders) inside the user message stream. None of it is text the
+// human typed, so it shouldn't appear in the dashboard preview.
+const SYNTHETIC_BLOCK_RE = /<(system-reminder|command-name|command-message|command-args|local-command-stdout|local-command-stderr|user-prompt-submit-hook)>[\s\S]*?<\/\1>/gi
+
+function stripSyntheticBlocks(text: string): string {
+  return text.replace(SYNTHETIC_BLOCK_RE, '').replace(/\s+/g, ' ').trim()
+}
+
 /**
  * Pull the most recent user-authored text out of a /v1/messages request body.
  * Returns truncated text suitable for a dashboard preview, or '' if not parseable.
@@ -59,8 +68,8 @@ function extractLastUserMessage(body: Buffer): string {
         }
         text = parts.join('\n').trim()
       }
-      if (text) {
-        const flat = text.replace(/\s+/g, ' ').trim()
+      const flat = stripSyntheticBlocks(text)
+      if (flat) {
         return flat.length > USER_MESSAGE_MAX
           ? flat.slice(0, USER_MESSAGE_MAX) + '…'
           : flat

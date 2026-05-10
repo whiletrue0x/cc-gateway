@@ -1,5 +1,10 @@
 import { getDb } from './db.js'
 
+const SYNTHETIC_BLOCK_RE = /<(system-reminder|command-name|command-message|command-args|local-command-stdout|local-command-stderr|user-prompt-submit-hook)>[\s\S]*?<\/\1>/gi
+function stripSyntheticBlocks(text: string): string {
+  return text.replace(SYNTHETIC_BLOCK_RE, '').replace(/\s+/g, ' ').trim()
+}
+
 const MINUTE_MS = 60_000
 const HOUR_MS = 3_600_000
 const MINUTES_KEPT = 60
@@ -304,7 +309,7 @@ export function getMetricsSnapshot() {
     if (point) point.count = r.count
   }
 
-  const recent = db
+  const recent = (db
     .prepare(
       `SELECT
         ts, client, method, path, status,
@@ -320,7 +325,12 @@ export function getMetricsSnapshot() {
        ORDER BY ts DESC
        LIMIT ?`,
     )
-    .all(RECENT_LIMIT) as RequestRecord[]
+    .all(RECENT_LIMIT) as RequestRecord[])
+    // Strip Claude Code synthetic blocks from historical rows captured before
+    // the proxy started filtering them. New writes are already clean.
+    .map((r) => r.userMessage
+      ? { ...r, userMessage: stripSyntheticBlocks(r.userMessage) }
+      : r)
 
   // Period summaries — easy to read "today / 7d / 30d" cost & usage
   const day = 24 * HOUR_MS
