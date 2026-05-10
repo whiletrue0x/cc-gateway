@@ -130,17 +130,88 @@ export function renderDashboard(): string {
     padding: 14px 24px; border-bottom: 1px solid var(--border);
     display: flex; align-items: center; justify-content: space-between;
     background: var(--panel); position: sticky; top: 0; z-index: 10;
+    gap: 12px;
   }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
   header .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
   main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; width: 100%; }
+
+  /* Tablet: collapse the sidebar into a sticky horizontal nav at the top. */
   @media (max-width: 800px) {
     body { flex-direction: column; }
-    aside.sidebar { width: 100%; height: auto; position: static; }
-    aside.sidebar nav { flex-direction: row; flex-wrap: wrap; padding: 8px; }
-    aside.sidebar nav a { padding: 6px 10px; }
+    aside.sidebar {
+      width: 100%; height: auto;
+      position: sticky; top: 0; z-index: 20;
+      flex-direction: row; align-items: center;
+      padding: 0 12px;
+    }
+    aside.sidebar .brand {
+      padding: 12px 8px 12px 4px; border-bottom: 0; border-right: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    aside.sidebar .brand .sub { display: none; }
+    aside.sidebar nav {
+      flex: 1; flex-direction: row; padding: 8px;
+      overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: none;
+    }
+    aside.sidebar nav::-webkit-scrollbar { display: none; }
+    aside.sidebar nav a {
+      padding: 6px 10px; flex-shrink: 0; font-size: 12px;
+    }
     aside.sidebar .sidebar-footer { display: none; }
+    header { position: static; }
   }
+
+  /* Phone: tighten everything and let tables scroll horizontally. */
+  @media (max-width: 600px) {
+    body { font-size: 13px; }
+    header { padding: 10px 14px; }
+    header h1 { font-size: 14px; }
+    main { padding: 12px 14px; }
+    .grid { gap: 12px; }
+    .card { padding: 12px; }
+    .card h2 { margin-bottom: 10px; font-size: 11px; }
+    .stat .value { font-size: 20px; }
+    .row { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+    table { font-size: 12px; }
+    th, td { padding: 6px 8px; }
+    .msg { max-width: 180px; }
+    .path { max-width: 200px; }
+    .scroll-y { max-height: 360px; }
+    .toolbar { gap: 6px; }
+    select, button { padding: 5px 8px; font-size: 12px; }
+    .modal-box {
+      width: 100%; max-width: 100vw; height: 100vh; max-height: 100vh;
+      border-radius: 0; border: 0; padding: 18px;
+      overflow-y: auto;
+    }
+    .modal { align-items: stretch; justify-content: stretch; }
+  }
+
+  /* All table containers get horizontal scroll so wide tables stay usable
+     on narrow screens without breaking the card layout. */
+  .table-wrap, #periodTable, #modelsTable, #clientsTable, #clientsConfig {
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .table-wrap::-webkit-scrollbar,
+  #periodTable::-webkit-scrollbar,
+  #modelsTable::-webkit-scrollbar,
+  #clientsTable::-webkit-scrollbar,
+  #clientsConfig::-webkit-scrollbar { height: 8px; }
+  .table-wrap::-webkit-scrollbar-thumb,
+  #periodTable::-webkit-scrollbar-thumb,
+  #modelsTable::-webkit-scrollbar-thumb,
+  #clientsTable::-webkit-scrollbar-thumb,
+  #clientsConfig::-webkit-scrollbar-thumb { background: #2c333d; border-radius: 4px; }
+  /* Force tables inside the scroll wrappers to take their natural width so the
+     overflow actually triggers instead of squishing columns. */
+  #periodTable table, #modelsTable table, #clientsTable table, #clientsConfig table {
+    min-width: 520px;
+  }
+  .scroll-y { overflow-x: auto; }
+  .scroll-y table { min-width: 900px; }
   .grid { display: grid; gap: 16px; }
   .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 12px; }
   .card {
@@ -258,20 +329,20 @@ export function renderDashboard(): string {
     <a href="#recent"><span class="icon">»</span>Recent requests</a>
     <a href="#about"><span class="icon">?</span>How to use</a>
   </nav>
-  <div class="sidebar-footer">
-    <span class="meta" id="updated">loading…</span>
-    <form action="/logout" method="post"><button type="submit">Logout</button></form>
-  </div>
 </aside>
 <div class="content">
 <header>
   <h1 id="pageTitle">Overview</h1>
   <div class="toolbar">
+    <span class="meta" id="updated">loading…</span>
     <select id="rangeSel">
       <option value="minute">Last 60 min</option>
       <option value="hour">Last 24 h</option>
     </select>
     <button id="refreshBtn">Refresh</button>
+    <form action="/logout" method="post" style="display:inline">
+      <button type="submit">Logout</button>
+    </form>
   </div>
 </header>
 <main>
