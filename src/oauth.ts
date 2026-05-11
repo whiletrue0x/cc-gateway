@@ -19,6 +19,20 @@ type OAuthTokens = {
 }
 
 let cachedTokens: OAuthTokens | null = null
+let onTokensUpdated: ((tokens: OAuthTokens) => void) | null = null
+
+export function setOnTokensUpdated(cb: (tokens: OAuthTokens) => void) {
+  onTokensUpdated = cb
+}
+
+function persistTokens(tokens: OAuthTokens) {
+  if (!onTokensUpdated) return
+  try {
+    onTokensUpdated(tokens)
+  } catch (err) {
+    log('warn', `Token persist callback threw: ${err instanceof Error ? err.message : err}`)
+  }
+}
 
 /**
  * Initialize OAuth.
@@ -55,6 +69,7 @@ export async function initOAuth(oauth: {
   }
 
   cachedTokens = await refreshOAuthToken(oauth.refresh_token)
+  persistTokens(cachedTokens)
   log('info', `OAuth token acquired, expires at ${new Date(cachedTokens.expiresAt).toISOString()}`)
   scheduleRefresh(oauth.refresh_token)
 }
@@ -71,6 +86,7 @@ function scheduleRefresh(refreshToken: string) {
       cachedTokens = await refreshOAuthToken(
         cachedTokens?.refreshToken || refreshToken,
       )
+      persistTokens(cachedTokens)
       log('info', `OAuth token refreshed, expires at ${new Date(cachedTokens.expiresAt).toISOString()}`)
       scheduleRefresh(cachedTokens.refreshToken || refreshToken)
     } catch (err) {

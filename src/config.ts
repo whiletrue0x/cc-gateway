@@ -2,9 +2,15 @@ import { readFileSync } from 'fs'
 import { parse } from 'yaml'
 import { resolve } from 'path'
 
+export type CostLimitPeriod = 'lifetime' | 'monthly' | 'daily'
+
 export type TokenEntry = {
   name: string
   token: string
+  // Optional cost cap (USD). 0 / undefined = unlimited.
+  cost_limit_usd?: number
+  // Window the cap applies to. Defaults to 'lifetime'.
+  cost_limit_period?: CostLimitPeriod
 }
 
 export type Config = {
@@ -47,6 +53,9 @@ export type Config = {
   logging: {
     level: 'debug' | 'info' | 'warn' | 'error'
     audit: boolean
+  }
+  db?: {
+    path: string
   }
 }
 
